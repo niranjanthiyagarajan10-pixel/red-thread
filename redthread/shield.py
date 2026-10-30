@@ -15,6 +15,7 @@ _PAN = re.compile(r"\b([A-Z]{3}[ABCFGHLJPT][A-Z]\d{4}[A-Z])\b", re.I)
 _AADHAAR = re.compile(r"(?:aadhaar|aadhar|आधार)\D{0,20}?(\d{4}[ \-]?\d{4}[ \-]?\d{4})(?!\d)", re.I)
 _PASSWORD = re.compile(r"\b(?:password|passcode|mpin|upi pin|pin)\s*(?:is|:|=)\s*(\S+)", re.I)
 _CVV = re.compile(r"\bcvv\b\D{0,10}?(\d{3,4})\b", re.I)
+_CARD_WORDS = re.compile(r"\b(?:card|debit|credit|diners|expiry|cvv)\b", re.I)
 _RECOVERY = re.compile(
     r"recovery (?:agent|expert|service|company|team)|refund agent|recover (?:your|ur) money|get your money back"
     r"|processing fee|advance fee|paise? wapas|paisa wapas|पैसे वापस",
@@ -51,6 +52,11 @@ def _luhn_ok(digits):
     return total % 10 == 0
 
 
+def _is_complaint_number(digits):
+    """Complaint numbers have 14 digits and start with 2 or 3, and some pass the card check by chance."""
+    return len(digits) == 14 and digits[0] in "23"
+
+
 def find_sensitive(text):
     items = []
     for kind, pattern in (
@@ -60,6 +66,8 @@ def find_sensitive(text):
         items += [Sensitive(kind, match.start(1), match.end(1)) for match in pattern.finditer(text)]
     for match in _CARD.finditer(text):
         digits = re.sub(r"\D", "", match.group(1))
+        if _is_complaint_number(digits) and not _CARD_WORDS.search(text):
+            continue
         if 13 <= len(digits) <= 19 and _luhn_ok(digits):
             items.append(Sensitive("card", match.start(1), match.end(1)))
     return items
