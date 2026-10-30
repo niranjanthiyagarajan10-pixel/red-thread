@@ -109,6 +109,8 @@ class RecoveryTests(unittest.TestCase):
         out = self.engine.handle("u1", Incoming(voice_text="I already paid dhai lakh", screenshot_text="Paid Rs 2,50,000 to scam@ybl UTR 533827652689", now=NOW))
         self.assertIn("careful people", out.answer.headline)
         self.assertIn("Rs 2,50,000", render(out.answer))
+        self.assertIn('Say: "I lost Rs 2,50,000', render(out.answer))
+        self.assertIn("533827652689", render(out.answer))
         session = self.engine.session("u1")
         self.assertEqual(session.facts["amount"], Decimal(250000))
         self.assertEqual(session.facts["reference"], "533827652689")
@@ -124,6 +126,8 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(self.engine.session("u1").case.state, "helpline_ack")
         self.assertIsNotNone(out.sheet)
         self.assertIn("24 hours", render(out.answer))
+        self.assertIn("Still needed before you file", render(out.answer))
+        self.assertIn("State", render(out.answer))
 
     def test_second_victim_is_offered_a_link_only_with_consent(self):
         self.engine.handle("a", Incoming(voice_text="I paid Rs 500", screenshot_text="Paid Rs 500 to scam@ybl", now=NOW))
@@ -144,7 +148,7 @@ class FullLoopTests(unittest.TestCase):
 
         eng.handle("next", Incoming(chat_export=CHAT_EXPORT, now=NOW))
         out = eng.handle("next", Incoming(button="Arjun", now=NOW))
-        self.assertIn("1 other report", render(out.answer))
+        self.assertIn("1 other report shares", render(out.answer))
 
 
 class WorldTests(unittest.TestCase):

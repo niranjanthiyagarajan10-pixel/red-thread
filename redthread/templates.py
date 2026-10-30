@@ -85,9 +85,14 @@ _TEXT = {
                "அழைப்பை துண்டியுங்கள். பணத்தை மாற்றாதீர்கள். கார்டில் உள்ள எண்ணில் வங்கியை அழையுங்கள்."),
     },
     "loss": {
-        "en": ("This happens to careful people.", "We have it: {amount}.", "First, call 1930 now. Here is what to say."),
-        "hi": ("ऐसा समझदार लोगों के साथ भी होता है।", "हमने नोट किया: {amount}।", "सबसे पहले अभी 1930 पर कॉल करें। क्या कहना है, यह रहा।"),
-        "ta": ("கவனமானவர்களுக்கும் இது நடக்கும்.", "குறித்துக்கொண்டோம்: {amount}.", "முதலில் இப்போதே 1930 அழையுங்கள். என்ன சொல்வது என்பது இங்கே."),
+        "en": ("This happens to careful people.", "We have it: {amount}.", "First, call 1930 now and say the line above."),
+        "hi": ("ऐसा समझदार लोगों के साथ भी होता है।", "हमने नोट किया: {amount}।", "सबसे पहले अभी 1930 पर कॉल करें और ऊपर वाली बात कहें।"),
+        "ta": ("கவனமானவர்களுக்கும் இது நடக்கும்.", "குறித்துக்கொண்டோம்: {amount}.", "முதலில் இப்போதே 1930 அழைத்து மேலே உள்ளதைச் சொல்லுங்கள்."),
+    },
+    "call_script": {
+        "en": ('Say: "I lost {amount} to an online scam.{reference} Please put a hold on it."', " The reference is {value}.", "money"),
+        "hi": ('कहें: "मेरे {amount} ऑनलाइन ठगी में चले गए।{reference} कृपया इसे होल्ड कराएं।"', " रेफरेंस {value} है।", "पैसे"),
+        "ta": ('சொல்லுங்கள்: "ஆன்லைன் மோசடியில் {amount} இழந்தேன்.{reference} தயவுசெய்து இதை நிறுத்தி வையுங்கள்."', " ரெஃபரன்ஸ் {value}.", "பணம்"),
     },
     "loss_question": {
         "en": "Answer when you can, but call 1930 first. Time matters.",
@@ -159,6 +164,10 @@ def after_loss(reconciled, language="en"):
     if reconciled.questions:
         return Answer(headline, reconciled.questions[:1], _TEXT["loss_question"][language], buttons)
     proof = [known.format(amount=format_rupees(reconciled.amount))] if reconciled.amount is not None else []
+    script, reference_part, no_amount = _TEXT["call_script"][language]
+    amount = format_rupees(reconciled.amount) if reconciled.amount is not None else no_amount
+    reference = reference_part.format(value=reconciled.reference) if reconciled.reference else ""
+    proof.append(script.format(amount=amount, reference=reference))
     return Answer(headline, proof, next_step, buttons)
 
 

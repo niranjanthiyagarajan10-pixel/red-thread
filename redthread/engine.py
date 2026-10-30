@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from redthread import templates
+from redthread.amounts import format_rupees
 from redthread.case import Case, apply_message, classify_message, next_step
 from redthread.conversation import Conversation, Turn, parse_whatsapp_export
 from redthread.facts import Reconciled, extract_identifiers, reconcile
@@ -134,9 +135,9 @@ class Engine:
         if count and verdict.level == "nothing_found":
             verdict = Verdict("early_signs", ["Details match other reports"])
         answer = templates.script_report(verdict, session.findings, chat, session.language)
-        extra = [f"{flag.detail} {flag.source}" for flag in flags[:1] if flag.name == "broker_without_valid_handle"]
+        extra = [f"{flag.detail} {flag.source}" if flag.name == "broker_without_valid_handle" else flag.detail for flag in flags[:1]]
         if count:
-            extra.append(f"{count} other report{'s' if count != 1 else ''} share these details.")
+            extra.append("1 other report shares these details." if count == 1 else f"{count} other reports share these details.")
         if extra:
             answer.proof = (extra + answer.proof)[:3]
         return self._finish(session, answer)
@@ -178,13 +179,19 @@ class Engine:
         session.case = session.case or Case(session.user)
         apply_message(session.case, said, now)
         sheet = None
+        proof = []
         if session.case.state == "helpline_ack":
             sheet = filing_sheet(session.facts)
+            missing = [item.label for item in sheet.fields if item.problems]
+            if missing:
+                proof.append("Still needed before you file: " + ", ".join(missing) + ".")
         elif session.case.state == "eligible" and session.case.ack_id:
             remarks = "I request restoration of the amount held against my complaint, to my own bank account."
             sheet = refund_sheet(session.case.ack_id, remarks, held=session.case.held)
-        headline = "Case closed." if session.case.state == "closed" else "Got it. Your case is updated."
-        return self._finish(session, Answer(headline, [], next_step(session.case)), sheet)
+        headline = "Got it. Your case is updated."
+        if session.case.state == "closed":
+            headline = f"{format_rupees(session.case.credited)} is back in your account."
+        return self._finish(session, Answer(headline, proof, next_step(session.case)), sheet)
 
     def _press(self, session, button):
         if session.chat and not session.other and button in [name[:20] for name in session.chat.speakers()]:
