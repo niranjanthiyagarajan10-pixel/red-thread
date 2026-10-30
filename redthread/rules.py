@@ -4,20 +4,32 @@ from dataclasses import dataclass
 
 from redthread.facts import extract_identifiers
 
-_AUTHORITY = r"cbi|police|customs|narcotics|\bed\b|rbi|trai|cyber ?crime|पुलिस|सीबीआई|போலீஸ்"
-_LIVE = r"on the (?:phone|line|call)|on (?:a )?(?:video )?call|video call|disconnect|calling|phone par|फोन पर|கால்"
+_AUTHORITY = r"\bcbi\b|police|customs|narcotics|(?-i:\bED\b)(?! of)|\brbi\b|\btrai\b|cyber ?crime|पुलिस|सीबीआई|போலீஸ்"
+_LIVE = r"on the (?:phone|line|call)|on (?:a )?(?:video )?call|video call|disconnect|is calling|calling me|called me|phone par|फोन पर|கால்"
+_THREAT = r"parcel|drugs|warrant|laundering|will arrest|arrest (?:you|me)\b|threaten|धमका|number will be"
 _ARREST = re.compile(r"digital arrest|डिजिटल अरेस्ट|டிஜிட்டல் அரெஸ்ட்", re.I)
+_ISOLATE = re.compile(r"(?:do not|don't|dont) tell anyone|stay on (?:skype|the call|video)|kisi ko mat", re.I)
 _AUTHORITY_RE = re.compile(_AUTHORITY, re.I)
 _LIVE_RE = re.compile(_LIVE, re.I)
-_CODE = re.compile(r"\b(?:otp|code|pin)\b", re.I)
-_ASKING = re.compile(r"asking|asked|wants|caller|share|tell him|give|maang|मांग", re.I)
-_REMOTE = re.compile(r"anydesk|teamviewer|rustdesk|quicksupport|remote app|screen ?share", re.I)
+_THREAT_RE = re.compile(_THREAT, re.I)
+_POSTAL = re.compile(r"\bpin ?code\b", re.I)
+_CODE = re.compile(
+    r"\b(?:otp|pin)\b|\b\d[\- ]digit\b|\bsms code\b|\bcode (?:you|i|we|that) (?:just )?(?:got|received)|\bcode (?:from|in) (?:the )?(?:sms|message)",
+    re.I,
+)
+_ASKING = re.compile(r"asking|asked|wants|caller|share|\btell\b|give|read (?:out|it|the)|maang|मांग", re.I)
+_REMOTE = re.compile(
+    r"anydesk|teamviewer|rustdesk|quicksupport|remote app|screen ?share|share (?:your |my |the )?screen|\bapk\b", re.I
+)
 _SAFE = re.compile(r"safe account|secure account|safety account|सेफ अकाउंट", re.I)
 
 
 def during_call(text):
     """Returns the kind of pressure on a live call, or None."""
-    if _ARREST.search(text) or (_AUTHORITY_RE.search(text) and _LIVE_RE.search(text)):
+    text = _POSTAL.sub(" ", text)
+    if _ARREST.search(text) or _ISOLATE.search(text):
+        return "fake_authority"
+    if _AUTHORITY_RE.search(text) and (_LIVE_RE.search(text) or _THREAT_RE.search(text)):
         return "fake_authority"
     if _REMOTE.search(text):
         return "remote_app"
@@ -64,19 +76,28 @@ def money_flags(text):
     return flags
 
 
-_NOT_PAID = re.compile(
-    r"did not|didn't|not paid|not yet|haven't|have not|should i|asked me|wants me|told me to|nahi bheje|नहीं", re.I
-)
-_PAID = re.compile(
-    r"\b(?:paid|sent|transferred|debited|deducted|lost)\b|bhej (?:diye|diya)|kat gaye|transfer panni\w*|anupp\w+"
-    r"|भेज (?:दिए|दिया)|कट गए|அனுப்பி",
+_NEGATED = re.compile(
+    r"(?:did not|didn't|have not|haven't|not yet|never|not|almost|nearly)\s+(?:\w+\s+)?(?:pay|paid|send|sent|transfer\w*)"
+    r"|\b(?:he|she|they)\s+paid\b|nahi bheje|नहीं भेजे|भेजे नहीं",
     re.I,
+)
+_ONLY_ASKED = re.compile(r"should i|asked me|wants me|told me to", re.I)
+_THEN_PAID = re.compile(r"\b(?:and|so|then)\s+(?:i\s+)?(?:paid|sent|transferred)\b", re.I)
+_PAID = re.compile(
+    r"\bpaid\b(?!\s+(?:leave|holiday|plan|version))|\b(?:transferred|debited|deducted)\b"
+    r"|\b(?:sent|lost|gave)\b(?=.{0,30}(?:money|paise|rupee|\brs\b|₹|lakh|lac\b|crore|savings|everything|\d{3,}|\d+\s*k\b))"
+    r"|\b(?:gone|took|taken|cut|withdrawn|missing)\b.{0,20}\bfrom my (?:account|bank)"
+    r"|bhej (?:diye|diya)|kat gaye|de di(?:ye|ya)|transfer panni\w*|anupp\w+"
+    r"|भेज (?:दिए|दिया)|कट गए|அனுப்பி",
+    re.I | re.S,
 )
 
 
 def money_has_moved(text):
     if re.search(r"already paid", text, re.I):
         return True
-    if _NOT_PAID.search(text):
+    if _NEGATED.search(text):
+        return False
+    if _ONLY_ASKED.search(text) and not _THEN_PAID.search(text):
         return False
     return bool(_PAID.search(text))

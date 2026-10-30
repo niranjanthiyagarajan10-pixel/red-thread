@@ -67,8 +67,12 @@ _DIGIT_WORDS = _table([
     ("nine nau onbadhu ஒன்பது नौ", "9"),
 ])
 _NUMERIC = re.compile(r"^\d[\d,]*(?:\.\d+)?$")
-_NUMERIC_K = re.compile(r"^(\d[\d,]*(?:\.\d+)?)k$")
+_NUMERIC_UNIT = re.compile(r"^(\d[\d,]*(?:\.\d+)?)(k|l|lac|lacs|lakh|lakhs|cr|crore|crores)$")
+_UNIT_VALUES = {"k": 1000, "l": 100000, "cr": 10000000}
+_LAKH_GROUPED = re.compile(r"^\d{1,2}(?:,\d{2})+,\d{3}(?:\.\d+)?$")
+_SHORT_UNITS = {"l", "cr"}
 _STRIP = ".,!?;:()[]{}\"'…"
+DIGIT_WORD_PATTERN = "|".join(sorted(map(re.escape, _DIGIT_WORDS), key=len, reverse=True))
 
 
 @dataclass
@@ -78,7 +82,7 @@ class Amount:
 
 
 def _tokens(text):
-    text = unicodedata.normalize("NFC", text).replace("₹", " rs ")
+    text = unicodedata.normalize("NFC", text).replace("₹", " rs ").replace("/-", " ")
     text = re.sub(r"(?i)\b(rs|inr)\.?\s*(?=\d)", "rs ", text)
     return [token.strip(_STRIP).casefold() for token in text.split() if token.strip(_STRIP)]
 
@@ -86,8 +90,12 @@ def _tokens(text):
 def _is_part(token):
     return (
         token in _NUMBERS or token in _FIXED_FRACTIONS or token in _MODIFIERS or token in _HUNDREDS
-        or token in _LARGE or token in _COMPOUNDS or _NUMERIC.match(token) or _NUMERIC_K.match(token)
+        or token in _LARGE or token in _SHORT_UNITS or token in _COMPOUNDS or _NUMERIC.match(token) or _NUMERIC_UNIT.match(token)
     )
+
+
+def _unit_value(unit):
+    return _UNIT_VALUES.get(unit) or _LARGE[unit]
 
 
 def _read_run(tokens, start):
@@ -96,12 +104,16 @@ def _read_run(tokens, start):
     current = None
     modifier = Decimal(0)
     has_unit = False
+    last_unit = None
     position = start
     while position < len(tokens):
         token = tokens[position]
         following = tokens[position + 1] if position + 1 < len(tokens) else ""
         if token == "and" and following == "a" and position + 2 < len(tokens) and tokens[position + 2] == "half":
-            current = (current or Decimal(0)) + Decimal("0.5")
+            if current is None and last_unit:
+                total += Decimal(last_unit) / 2
+            else:
+                current = (current or Decimal(0)) + Decimal("0.5")
             position += 3
             continue
         if token == "a" and following in _LARGE:
@@ -111,8 +123,11 @@ def _read_run(tokens, start):
         elif token in _COMPOUNDS:
             total += _COMPOUNDS[token]
             has_unit = True
-        elif token in _LARGE:
-            total += (current if current is not None else Decimal(1) + modifier) * _LARGE[token]
+        elif token in _SHORT_UNITS and current is None:
+            break
+        elif token in _LARGE or token in _SHORT_UNITS:
+            last_unit = _unit_value(token)
+            total += (current if current is not None else Decimal(1) + modifier) * last_unit
             current, modifier = None, Decimal(0)
             has_unit = True
         elif token in _HUNDREDS:
@@ -126,11 +141,13 @@ def _read_run(tokens, start):
         elif token in _NUMBERS:
             current = (current or Decimal(0)) + _NUMBERS[token] + modifier
             modifier = Decimal(0)
-        elif _NUMERIC_K.match(token):
-            total += Decimal(_NUMERIC_K.match(token).group(1).replace(",", "")) * 1000
+        elif _NUMERIC_UNIT.match(token):
+            number, unit = _NUMERIC_UNIT.match(token).groups()
+            total += Decimal(number.replace(",", "")) * _unit_value(unit)
             has_unit = True
         elif _NUMERIC.match(token):
             current = (current or Decimal(0)) + Decimal(token.replace(",", ""))
+            has_unit = has_unit or bool(_LAKH_GROUPED.match(token))
         else:
             break
         position += 1
@@ -138,7 +155,7 @@ def _read_run(tokens, start):
 
 
 def parse_amounts(text):
-    """A number counts as money only with a unit such as lakh, or a currency mark. Bare numbers may be references."""
+    """A number counts as money only with a unit such as lakh, a currency mark or lakh commas. Bare numbers may be references."""
     tokens = _tokens(text)
     amounts = []
     position = 0
@@ -151,7 +168,8 @@ def parse_amounts(text):
             continue
         value, end, has_unit = _read_run(tokens, position)
         before_rupee = end < len(tokens) and tokens[end] in _RUPEE_WORDS
-        if value > 0 and (has_unit or after_currency or before_rupee):
+        litres = end < len(tokens) and tokens[end] == "of" and tokens[end - 1].endswith("l")
+        if value > 0 and not litres and (has_unit or after_currency or before_rupee):
             amounts.append(Amount(value, " ".join(tokens[position:end])))
         position = max(end, position + 1)
     return amounts
