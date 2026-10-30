@@ -1,0 +1,27 @@
+# Secrets
+.env
+.env.*
+
+# Python
+__pycache__/
+*.pyc
+
+# Face clips and photos stay out of the repo.
+*.mp4
+*.mov
+*.webm
+
+# Private notes. They name other products and personal details, and the repo goes public.
+CLAUDE.md
+docs/SPEC.md
+docs/ideas.md
+docs/rubric-strategy.md
+docs/research-live-call.md
+docs/research/
+spike/
+.claude/
+
+# Benchmarks, results and caches live in ~/muse-spike, outside this folder.
+data/
+results/
+cache/
