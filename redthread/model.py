@@ -34,7 +34,7 @@ def load_api_key(environ=os.environ, home=HOME):
         return key
     env_file = Path(home) / ".env"
     if env_file.exists():
-        for line in env_file.read_text(encoding="utf-8").splitlines():
+        for line in env_file.read_text(encoding="utf-8-sig").splitlines():
             if line.startswith("MODEL_API_KEY="):
                 return line.split("=", 1)[1].strip().strip('"').strip("'")
     return None
