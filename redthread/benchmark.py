@@ -280,7 +280,7 @@ def _chats_by_set(args):
     for name in own_sets:
         chats[name] = load_set(own, name)
     for name, conversations in chats.items():
-        if args.split != "all":
+        if args.split != "all" and name not in own_sets:
             conversations = [chat for chat in conversations if split_of(chat.id) == args.split]
         chats[name] = conversations[:args.limit] if args.limit else conversations
     return {name: conversations for name, conversations in chats.items() if conversations}
