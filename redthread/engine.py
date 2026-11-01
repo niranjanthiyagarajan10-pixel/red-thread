@@ -1,21 +1,23 @@
 """The one contact: everything a person sends comes here and gets one short answer.
 
 Order matters. Secrets are refused first, then live danger gets an instant fixed answer, and only then
-does anything slower run. With no model at all, every path still answers from rules and templates.
+does anything slower run. Spark can raise an alarm the rules missed, but it can never clear one.
+With no model at all, every path still answers from rules and templates.
 """
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from redthread import templates
+from redthread import senses, templates
 from redthread.amounts import format_rupees
 from redthread.case import Case, apply_message, classify_message, next_step
 from redthread.conversation import Conversation, Turn, parse_whatsapp_export
 from redthread.facts import Reconciled, extract_identifiers, reconcile
+from redthread.model import BudgetExceeded
 from redthread.reply import Answer, check_answer
 from redthread.rules import during_call, money_flags, money_has_moved
 from redthread.sheets import filing_sheet, refund_sheet, suspect_report_sheet
-from redthread.shield import scrub
+from redthread.shield import check_relay, scrub
 from redthread.stages import SIGNALS, Verdict, analyze, decide, keyword_findings
 
 _GREETING = re.compile(r"^\s*(hi|hello|hey|namaste|namaskar|vanakkam)\W*$", re.I)
@@ -24,7 +26,18 @@ _ON_TOPIC = re.compile(
     r"|invest|police|forward|message|\bcall\b|ठग|पैसे|மோசடி|பணம்",
     re.I,
 )
-_CASE_MESSAGES = {"ack", "held", "eligible", "request", "credit"}
+_NEEDS_A_CASE = {"held", "eligible", "request", "credit"}
+_STORY_LIMIT = 1500
+_QUESTIONS = {
+    "story": "What happened? Tell us in your own words, by voice or text: how it started, what they said and how you paid.",
+    "when": "When did this happen?",
+    "state": "Which state do you live in?",
+    "district": "Which district?",
+    "bank": "Which bank or wallet did the money leave?",
+    "paid_on": "On what date did you pay?",
+}
+_MORE_STORY = "Please tell us a little more: how it started, what they said and how you paid."
+_REFUND_REMARKS = "I request restoration of the amount held against my complaint, to my own bank account."
 
 
 @dataclass
@@ -35,6 +48,7 @@ class Incoming:
     chat_export: str = ""
     button: str = ""
     now: datetime = None
+    audio: bytes = None
     images: tuple = ()
 
 
@@ -55,6 +69,10 @@ class Session:
     other: str = None
     findings: list = field(default_factory=list)
     identifiers: dict = field(default_factory=dict)
+    spoken: str = ""
+    words: list = field(default_factory=list)
+    asking: str = None
+    images: list = field(default_factory=list)
 
 
 def _detect_language(text, current):
@@ -63,6 +81,10 @@ def _detect_language(text, current):
     if re.search("[஀-௿]", text):
         return "ta"
     return current
+
+
+def _join(*parts):
+    return " ".join(part for part in parts if part)
 
 
 class Engine:
@@ -76,7 +98,13 @@ class Engine:
 
     def handle(self, user, incoming):
         session = self.session(user)
-        said = " ".join(part for part in (incoming.text, incoming.voice_text) if part)
+        session.images = [image for image, _ in incoming.images]
+        voice = incoming.voice_text
+        if incoming.audio:
+            voice = senses.hear(self.model, incoming.audio)
+            if voice is None:
+                return self._say(session, Answer("We could not hear that voice note.", [], "Please type it here instead."))
+        said = _join(incoming.text, voice)
         session.language = _detect_language(said, session.language)
 
         cleaned = scrub(said)
@@ -87,16 +115,46 @@ class Engine:
         if incoming.chat_export:
             return self._receive_chat(session, scrub(incoming.chat_export).text)
 
+        screenshot = scrub(incoming.screenshot_text).text
+        paid_on_screen = False
+        for image, mime in incoming.images:
+            seen = senses.see(self.model, image, mime)
+            if seen is None:
+                if not said:
+                    return self._say(session, Answer("We could not read that image.", [], "Please type what it says, with the amount and any reference number."))
+                continue
+            text = scrub(seen.text).text
+            if seen.kind != "payment":
+                said = _join(said, text)
+            elif seen.payment_state == "failed":
+                return self._say(session, Answer("This payment shows as failed.", [], "Check your bank app to be sure. Do not try the payment again."))
+            else:
+                screenshot = _join(screenshot, text)
+                paid_on_screen = True
+
         kind = during_call(said)
         if kind:
             return self._finish(session, templates.during_call(kind, session.language))
+        if check_relay(said).reason == "recovery_offer":
+            return self._say(session, Answer(
+                "This looks like a second scam.", [],
+                "Real refunds never ask for a fee and never use agents. Do not pay. Ask your police station.",
+            ))
 
-        screenshot = scrub(incoming.screenshot_text).text
         message = classify_message(said)
-        if message.kind in _CASE_MESSAGES:
+        if message.kind == "ack" or (message.kind in _NEEDS_A_CASE and session.case):
             return self._track(session, said, incoming.now)
-        if money_has_moved(f"{said} {screenshot}"):
-            return self._loss(session, incoming.voice_text or incoming.text, screenshot)
+        if session.asking and said and not paid_on_screen:
+            return self._collect(session, said, incoming.now)
+        if paid_on_screen or money_has_moved(f"{said} {screenshot}"):
+            return self._loss(session, voice or incoming.text, screenshot)
+        if said and not _GREETING.match(said):
+            found = senses.triage(self.model, said)
+            if found and found[0] == "live_pressure":
+                live = found[1] if found[1] != "none" else "fake_authority"
+                return self._finish(session, templates.during_call(live, session.language))
+            if found and found[0] == "money_gone":
+                return self._loss(session, said, screenshot)
         return self._check_message(session, said)
 
     def _finish(self, session, answer, sheet=None, link_offer=False):
@@ -106,20 +164,36 @@ class Engine:
             answer = templates.welcome(session.language)
         return Outgoing(answer, sheet, link_offer)
 
+    def _say(self, session, answer, sheet=None):
+        """For English wording. Spark translates it when it can, and numbers are checked, otherwise English goes."""
+        if session.language != "en" and self.model:
+            lines = [answer.headline, *answer.proof, answer.next_step]
+            out = senses.translate(self.model, lines, session.language)
+            if out:
+                answer = Answer(out[0], out[1:-1], out[-1], answer.buttons)
+        return self._finish(session, answer, sheet)
+
     def _receive_chat(self, session, export):
         session.chat = parse_whatsapp_export(export, session.user)
+        session.other = None
         speakers = session.chat.speakers()
         if not speakers:
-            return self._finish(session, Answer("We could not read that chat.", [], "Try the export again, or send screenshots."))
+            return self._say(session, Answer("We could not read that chat.", [], "Try the export again, or send screenshots."))
         if len(speakers) == 1:
             return self._read_chat(session, speakers[0])
         names = [name[:20] for name in speakers[:3]]
-        return self._finish(session, Answer("Which name is you?", [], "Tap your name, so we read the other person.", names))
+        return self._say(session, Answer("Which name is you?", [], "Tap your name, so we read the other person.", names))
+
+    def _analyze(self, chat, other):
+        try:
+            return analyze(chat, self.model, other)
+        except BudgetExceeded:
+            return analyze(chat, None, other)
 
     def _read_chat(self, session, other):
         session.other = other
         chat = session.chat
-        report = analyze(chat, self.model, other)
+        report = self._analyze(chat, other)
         said = "\n".join(turn.text for turn in chat.turns if turn.speaker == other)
         session.findings = report.findings
         session.identifiers = extract_identifiers(said)
@@ -127,7 +201,7 @@ class Engine:
 
     def _report(self, session, verdict, chat, said):
         flags = money_flags(said)
-        count = self.network.report_count(session.user, session.identifiers, script_text=said)
+        count = self.network.report_count(session.user, session.identifiers, script_text=said, images=session.images)
         if flags and verdict.level == "nothing_found":
             verdict = Verdict("early_signs", [flags[0].detail])
         if any(flag.name == "pay_to_withdraw" for flag in flags):
@@ -146,34 +220,93 @@ class Engine:
         if not said.strip() or _GREETING.match(said):
             return self._finish(session, templates.welcome(session.language))
         chat = Conversation(session.user, [Turn(0, "them", said)])
-        findings = keyword_findings(chat, "them")
         flags = money_flags(said)
-        session.chat, session.other, session.findings = chat, "them", findings
-        session.identifiers = extract_identifiers(said)
-        if not findings and not flags and not _ON_TOPIC.search(said):
+        if not flags and not keyword_findings(chat, "them") and not _ON_TOPIC.search(said):
             return self._finish(session, templates.decline(session.language))
-        return self._report(session, decide(findings), chat, said)
+        report = self._analyze(chat, "them")
+        session.chat, session.other, session.findings = chat, "them", report.findings
+        session.identifiers = extract_identifiers(said)
+        return self._report(session, report.verdict, chat, said)
 
     def _loss(self, session, spoken, screenshot):
-        result = reconcile(spoken, screenshot)
+        session.spoken = spoken or session.spoken
+        result = reconcile(session.spoken, screenshot)
         session.case = session.case or Case(session.user)
         if result.amount is not None:
             session.facts["amount"] = result.amount
         if result.reference:
             session.facts["reference"] = result.reference
         if spoken:
-            session.facts["story"] = spoken
+            session.words.append(spoken)
+        self._write_story(session)
         identifiers = extract_identifiers(f"{spoken} {screenshot}")
         session.facts["suspect_upi"] = identifiers["upi"]
         if identifiers["phone"]:
             session.facts["suspect_mobile"] = identifiers["phone"][0]
         kept = {kind: identifiers[kind] for kind in ("upi", "phone", "link")}
-        matches = self.network.matches(session.user, kept)
-        self.network.add_case(session.user, kept)
+        matches = self.network.matches(session.user, kept, images=session.images)
+        self.network.add_case(session.user, kept, images=session.images)
         answer = templates.after_loss(result, session.language)
         if matches:
             answer.proof = answer.proof + ["Someone else reported this same account. If you both agree, you can talk."]
         return self._finish(session, answer, link_offer=bool(matches))
+
+    def _write_story(self, session, english=None):
+        """True facts from code, then the person's own account. Nothing is padded or invented."""
+        facts = session.facts
+        opening = []
+        if facts.get("amount") is not None:
+            opening.append(f"I lost {format_rupees(facts['amount'])} in an online scam.")
+        if facts.get("reference"):
+            opening.append(f"The transaction reference is {facts['reference']}.")
+        story = " ".join([*opening, english or " ".join(session.words)])
+        session.facts["story"] = story[:_STORY_LIMIT].rsplit(" ", 1)[0] if len(story) > _STORY_LIMIT else story
+
+    def _missing(self, session):
+        sheet = filing_sheet(session.facts)
+        problems = {item.label for item in sheet.fields if item.problems}
+        labels = {
+            "Incident details": "story", "Approximate Date & Time": "when", "State": "state",
+            "District": "district", "Bank, wallet or merchant": "bank", "Date of transaction": "paid_on",
+        }
+        order = [labels[label] for label in labels if label in problems]
+        return sheet, order
+
+    def _collect(self, session, said, now):
+        field_name = session.asking
+        if field_name == "story":
+            session.words.append(said)
+        pulled = senses.pull_details(self.model, " ".join(session.words + [said]), self._known(session), now)
+        for name in ("when", "state", "district", "police_station", "bank", "paid_on"):
+            if pulled.get(name):
+                session.facts[name] = pulled[name]
+        self._write_story(session, pulled.get("story_english"))
+        if field_name != "story" and not pulled.get(field_name):
+            session.facts[field_name] = self._read_answer(field_name, said, now)
+        return self._next_question(session)
+
+    def _known(self, session):
+        return {key: session.facts[key] for key in ("amount", "reference") if session.facts.get(key) is not None}
+
+    def _read_answer(self, field_name, said, now):
+        if field_name == "state":
+            return senses.match_state(said) or said.strip()
+        if field_name in ("when", "paid_on"):
+            return senses.resolve_date(said, now)
+        return said.strip()
+
+    def _next_question(self, session):
+        sheet, missing = self._missing(session)
+        if not missing:
+            session.asking = None
+            return self._say(session, Answer(
+                "Your filing sheet is ready.", [],
+                "Open cybercrime.gov.in and copy each field across. You submit it yourself.",
+            ), sheet)
+        repeat = session.asking == "story" and missing[0] == "story"
+        session.asking = missing[0]
+        question = _MORE_STORY if repeat else _QUESTIONS[session.asking]
+        return self._say(session, Answer("Thanks. One more thing.", [], question), sheet)
 
     def _track(self, session, said, now):
         session.case = session.case or Case(session.user)
@@ -181,17 +314,19 @@ class Engine:
         sheet = None
         proof = []
         if session.case.state == "helpline_ack":
-            sheet = filing_sheet(session.facts)
-            missing = [item.label for item in sheet.fields if item.problems]
+            sheet, missing = self._missing(session)
             if missing:
-                proof.append("Still needed before you file: " + ", ".join(missing) + ".")
+                session.asking = missing[0]
+                proof = [
+                    "Still needed before you file: " + ", ".join(item.label for item in sheet.fields if item.problems) + ".",
+                    _QUESTIONS[session.asking],
+                ]
         elif session.case.state == "eligible" and session.case.ack_id:
-            remarks = "I request restoration of the amount held against my complaint, to my own bank account."
-            sheet = refund_sheet(session.case.ack_id, remarks, held=session.case.held)
+            sheet = refund_sheet(session.case.ack_id, _REFUND_REMARKS, held=session.case.held)
         headline = "Got it. Your case is updated."
         if session.case.state == "closed":
             headline = f"{format_rupees(session.case.credited)} is back in your account."
-        return self._finish(session, Answer(headline, proof, next_step(session.case)), sheet)
+        return self._say(session, Answer(headline, proof, next_step(session.case)), sheet)
 
     def _press(self, session, button):
         if session.chat and not session.other and button in [name[:20] for name in session.chat.speakers()]:
@@ -205,6 +340,10 @@ class Engine:
         if button == "paid":
             session.case = session.case or Case(session.user)
             return self._finish(session, templates.after_loss(Reconciled(), session.language))
+        if button == "called":
+            return self._say(session, Answer("Well done. That was the most important step.", [], "Forward the SMS with your acknowledgement number here."))
+        if button == "script":
+            return self._say(session, Answer("Send us the whole chat.", [], "Open the chat, tap More, then Export chat, then Without media, and share it here."))
         return self._finish(session, templates.welcome(session.language))
 
     def _quotes(self, session):
@@ -227,4 +366,4 @@ class Engine:
         said = "\n".join(turn.text for turn in session.chat.turns if turn.speaker == session.other) if session.chat else ""
         self.network.add_case(session.user, kept, script_text=said)
         answer = Answer("Here is your report, one field at a time.", [], "Enter it under Report Suspect on cybercrime.gov.in. You submit it.")
-        return self._finish(session, answer, sheet)
+        return self._say(session, answer, sheet)
