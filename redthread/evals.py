@@ -18,7 +18,8 @@ AMOUNTS = [
     ("2 crore", 20000000), ("2cr", 20000000), ("Rs.5000", 5000), ("Rs. 5,000/-", 5000), ("paanch hazaar", 5000),
     ("ek lakh pachas hazaar", 150000), ("1,80,000", 180000), ("1.5 lac", 150000), ("डेढ़ लाख", 150000),
     ("இரண்டு லட்சம்", 200000), ("sawa lakh", 125000), ("saade teen lakh", 350000), ("a lakh and a half", 150000),
-    ("Paid Rs 38,000 to scam@ybl", 38000),
+    ("Paid Rs 38,000 to scam@ybl", 38000), ("I already paid 38,000 38,000 rupees to that man.", 38000),
+    ("thirty-eight thousand", 38000),
 ]
 NOT_AMOUNTS = [
     "UTR 533827652689", "Acknowledgement No 30000000000012", "call 9876543210", "1,000 people", "room 204",
@@ -33,7 +34,7 @@ SECRETS = [
 NOT_SECRETS = [
     "UTR 533827652689", "Acknowledgement No 30000000000012", "Complaint 20000000000012 registered",
     "Your request ID is MR20261101000003", "pin code 600001", "call 9876543210", "Rs 2,50,000 debited",
-    "he asked for my otp", "what is an otp",
+    "he asked for my otp", "what is an otp", "UTR 533827652689 31 Oct 2026",
 ]
 RELAY_BLOCKS = [
     "call me on nine eight seven six five four three two one zero", "telegram rahul_88", "my insta is @rahul",

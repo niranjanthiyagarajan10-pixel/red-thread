@@ -195,6 +195,9 @@ class TranslateTests(unittest.TestCase):
         out = senses.translate(Scripted(translate={"lines": ["एक", "दो"]}), ["one", "two"], "hi")
         self.assertEqual(out, ["एक", "दो"])
 
+    def test_latin_letters_are_not_accepted_as_hindi(self):
+        self.assertIsNone(senses.translate(Scripted(translate={"lines": ["Samajh gaya"]}), ["Got it"], "hi"))
+
     def test_lost_or_changed_numbers_keep_the_english(self):
         lines = ["Rs 500 has come in.", "Ask your bank."]
         self.assertIsNone(senses.translate(Scripted(translate={"lines": ["Rs 900 आ गए।", "बैंक से पूछें।"]}), lines, "hi"))

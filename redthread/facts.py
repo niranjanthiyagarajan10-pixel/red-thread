@@ -18,6 +18,22 @@ _PHONE = re.compile(r"(?<!\d)(?:\+?91[\s\-]?|0)?[6-9]\d{4}[\s\-]?\d{5}(?!\d)")
 _REFERENCE = re.compile(r"(?<![\dA-Za-z])(?:\d{12}|(?=[A-Z0-9]*[A-Z])(?=[A-Z0-9]*\d)(?:[A-Z0-9]{16}|[A-Z0-9]{22}))(?![\dA-Za-z])")
 
 
+_MONTHS = ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec")
+_WRITTEN_DATE = re.compile(rf"\b(\d{{1,2}})\s+({'|'.join(_MONTHS)})[a-z]*,?\s+(\d{{4}})\b", re.I)
+_NUMERIC_DATE = re.compile(r"\b(\d{1,2})[/\-](\d{1,2})[/\-](\d{4})\b")
+
+
+def payment_date(text):
+    """The date printed on a payment screenshot, as dd/mm/yyyy, or None."""
+    written = _WRITTEN_DATE.search(text)
+    if written:
+        return f"{int(written.group(1)):02d}/{_MONTHS.index(written.group(2).lower()[:3]) + 1:02d}/{written.group(3)}"
+    numeric = _NUMERIC_DATE.search(text)
+    if numeric:
+        return f"{int(numeric.group(1)):02d}/{int(numeric.group(2)):02d}/{numeric.group(3)}"
+    return None
+
+
 def extract_identifiers(text):
     found = {"upi": [], "email": [], "phone": [], "link": [], "reference": []}
     for match in _ID.findall(text):

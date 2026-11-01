@@ -83,6 +83,7 @@ class Amount:
 
 def _tokens(text):
     text = unicodedata.normalize("NFC", text).replace("₹", " rs ").replace("/-", " ")
+    text = re.sub(r"(?<=[^\W\d])-(?=[^\W\d])", " ", text)
     text = re.sub(r"(?i)\b(rs|inr)\.?\s*(?=\d)", "rs ", text)
     return [token.strip(_STRIP).casefold() for token in text.split() if token.strip(_STRIP)]
 
@@ -146,6 +147,8 @@ def _read_run(tokens, start):
             total += Decimal(number.replace(",", "")) * _unit_value(unit)
             has_unit = True
         elif _NUMERIC.match(token):
+            if position > start and _NUMERIC.match(tokens[position - 1]):
+                break  # Two written numbers in a row are two numbers, or a transcription stutter. Never add them.
             current = (current or Decimal(0)) + Decimal(token.replace(",", ""))
             has_unit = has_unit or bool(_LAKH_GROUPED.match(token))
         else:

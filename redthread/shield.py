@@ -15,7 +15,7 @@ _OTP_BEFORE = re.compile(r"\b(\d{4,8})\b\D{0,20}?" + _OTP_WORD, re.I)
 _SPOKEN_DIGIT = rf"(?:{DIGIT_WORD_PATTERN})"
 _OTP_SPOKEN = re.compile(_OTP_WORD + rf"\W+(?:\w+\W+){{0,3}}?((?:{_SPOKEN_DIGIT}\W+){{3,7}}{_SPOKEN_DIGIT})(?!\w)", re.I)
 _PIN = re.compile(r"\b(?:mpin|pin)\b(?!\s*code)\s*(?:number\s*)?(?:is|:|=|hai)?\s*(\d{4,6})\b", re.I)
-_CARD = re.compile(r"(?<!\d)(\d(?:[ \-]?\d){12,18})(?!\d)")
+_CARD = re.compile(r"(?<!\d)(\d{13,19}|\d{4}(?:[ \-]\d{4}){2,3}(?:[ \-]\d{1,3})?|\d{4}[ \-]\d{6}[ \-]\d{4,5})(?!\d)")
 _PAN = re.compile(r"\b([A-Z]{3}[ABCFGHLJPT][A-Z]\d{4}[A-Z])\b", re.I)
 _AADHAAR = re.compile(r"(?:aadhaar|aadhar|आधार)\D{0,20}?(\d{4}[ \-]?\d{4}[ \-]?\d{4})(?!\d)", re.I)
 _PASSWORD = re.compile(r"\b(?:password|passcode)\s*(?:is|:|=)\s*(\S+)|\b(?:password|passcode)\s+(?=\S*\d)(\S+)", re.I)
