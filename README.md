@@ -27,6 +27,29 @@ Work in progress for the Meta Global AI Developer Hackathon, Indie track, theme 
 | `redthread/evals.py` | Plants errors on purpose and measures what the fixed rules catch |
 | `redthread/senses.py` | Voice Transcribe hears voice notes. Muse Spark reads screenshots, catches what rules miss, fills filing details and translates. Code keeps only known kinds, real states and numbers the person gave. |
 | `redthread/live.py` | The whole loop against the real models, with invented people and a hard spending cap |
+| `redthread/evals_live.py` | Measures what Muse Spark adds behind the rules on unseen text, and tries to trick it |
+| `redthread/audio.py` | Converts voice notes to WAV with ffmpeg, and only ever hands it real audio files |
+| `redthread/whatsapp.py`, `channel.py` | WhatsApp Cloud API: checked webhooks, replies, buttons and media. Not yet connected to a live number. |
+| `redthread/store.py` | Saves cases across restarts. The other person's chat is never saved, and "delete my data" removes everything. |
+| `redthread/server.py` | The webhook and the judge API, on the Python standard library |
+
+## How it fits together
+
+```mermaid
+flowchart TD
+    A[WhatsApp or judge page] --> B[Refuse secrets]
+    B --> C[Fixed rules: live call and money]
+    C -->|no rule fired| D[Muse Spark sorts the message]
+    A --> E[Voice Transcribe hears voice notes]
+    A --> F[Muse Spark reads screenshots and chats]
+    E --> B
+    F --> G[Code checks quotes, amounts and references]
+    D --> G
+    C --> H[Three-line answer]
+    G --> I[Case state and network of salted hashes]
+    I --> H
+    I --> J[Filing and refund sheets, one field at a time]
+```
 
 ## Run it
 
@@ -47,6 +70,14 @@ Planted errors, with no key:
 ```bash
 python -m redthread.evals
 ```
+
+The server, with `MODEL_API_KEY` set. With no key, it still answers from rules and templates:
+
+```bash
+python -m redthread.server
+```
+
+WhatsApp needs `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_ID`, `WHATSAPP_APP_SECRET` and `WHATSAPP_VERIFY_TOKEN`. Voice notes need `ffmpeg`, which the `Dockerfile` installs.
 
 ## Results so far
 
@@ -70,6 +101,17 @@ Reading whole chats, on practice data only. The public benchmark is synthetic, a
 | Romance scams cut before the money pitch | 0 of 20 | 3 of 20 | 10 of 20 | 1 of 20 |
 | Normal chats wrongly flagged (benchmark) | 0 of 77 | 0 of 77 | 0 of 20 | 0 of 77 |
 | Normal dating chats wrongly flagged | 0 of 20 | 0 of 20 | 1 of 20 | 2 of 20 |
+
+Single messages, in English, Hindi, Tamil and mixes. On a small batch the rules had never seen, Muse Spark found far more than fixed rules. On the first run 4 Spark calls returned nothing because reasoning used up the output limit, which gave 15 of 17 for live pressure. After raising the limit:
+
+| Test | Fixed rules | Muse Spark | Both |
+|---|---|---|---|
+| Someone under live pressure | 1 of 17 | 17 of 17 | 17 of 17 |
+| Money already gone | 1 of 12 | 12 of 12 | 12 of 12 |
+| Normal message wrongly called live | 0 of 14 | 0 of 14 | 0 of 14 |
+| Normal message wrongly called a loss | 1 of 14 | 0 of 14 | 1 of 14 |
+
+Fixed rules still answer first, because they are instant and work with no model. Muse Spark can raise an alarm they miss, and can never clear one. Seven attempts to trick the system passed on the final run, after one fix for a request that slipped past the off-topic check. These batches are small and invented by us.
 
 Spark alone detects as well as our pipeline here. What the pipeline adds is proof: every quote is checked word for word against the chat before anyone sees it. It does not warn before the first request for money or details.
 

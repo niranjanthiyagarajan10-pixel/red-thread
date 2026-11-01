@@ -30,3 +30,17 @@ jobs:
         env:
           PYTHONIOENCODING: utf-8
         run: python -m redthread.evals && python -m redthread.evals --fresh
+
+  image:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the server image
+        run: docker build -t red-thread .
+      - name: Start it with no keys and check it answers
+        run: |
+          docker run -d --name rt -p 8080:8080 red-thread
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do curl -fs http://127.0.0.1:8080/healthz && break; sleep 1; done
+          curl -fs -X POST http://127.0.0.1:8080/api/message -H 'Content-Type: application/json' -d '{"session":"ci","text":"I already paid Rs 38,000"}' | tee reply.json
+          grep -q "careful people" reply.json
+          docker exec rt ffmpeg -version | head -1
