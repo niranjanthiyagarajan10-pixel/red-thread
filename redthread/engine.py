@@ -63,6 +63,7 @@ class Outgoing:
     answer: Answer
     sheet: object = None
     link_offer: bool = False
+    sheet_draft: bool = False
 
 
 @dataclass
@@ -394,7 +395,9 @@ class Engine:
         repeat = session.asking == "story" and missing[0] == "story"
         session.asking = missing[0]
         question = _MORE_STORY if repeat else _QUESTIONS[session.asking]
-        return self._say(session, Answer("Thanks. One more thing.", [], question), sheet)
+        out = self._say(session, Answer("Thanks. One more thing.", [], question), sheet)
+        out.sheet_draft = True
+        return out
 
     def _track(self, session, said, now):
         session.case = session.case or Case(session.user)
@@ -414,7 +417,9 @@ class Engine:
         headline = "Got it. Your case is updated."
         if session.case.state == "closed":
             headline = f"{format_rupees(session.case.credited)} is back in your account."
-        return self._say(session, Answer(headline, proof, next_step(session.case)), sheet)
+        out = self._say(session, Answer(headline, proof, next_step(session.case)), sheet)
+        out.sheet_draft = bool(sheet) and not sheet.ready
+        return out
 
     def _press(self, session, button):
         if session.chat and not session.other and button in [name[:20] for name in session.chat.speakers()]:

@@ -133,6 +133,11 @@ def _button(key, language):
     return _BUTTONS[key][language]
 
 
+def button_key(label):
+    """The language-free id behind a button. A person's name has no key, so it stands for itself."""
+    return next((key for key, labels in _BUTTONS.items() if label in labels.values()), label)
+
+
 def _three(key, language, buttons=()):
     headline, proof, next_step = _TEXT[key][language]
     return Answer(headline, [proof] if proof else [], next_step, list(buttons))
