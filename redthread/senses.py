@@ -9,6 +9,7 @@ import re
 from dataclasses import dataclass
 from datetime import timedelta
 
+from redthread.audio import to_wav
 from redthread.model import BudgetExceeded, ModelError
 
 _FAILED = (ModelError, BudgetExceeded, ValueError, KeyError, TypeError, AttributeError)
@@ -52,8 +53,11 @@ DETAILS_SCHEMA = _schema("details", {
 TRANSLATE_SCHEMA = _schema("translate", {"lines": {"type": "array", "items": {"type": "string"}}})
 
 
-def hear(model, wav):
+def hear(model, note):
     """Turns a voice note into words. No confidence score exists, so amounts are checked against a screenshot later."""
+    wav = to_wav(note)
+    if wav is None:
+        return None
     try:
         return model.transcribe(wav, LANGUAGE_BIAS, KEYWORDS).text.strip()
     except _FAILED:
