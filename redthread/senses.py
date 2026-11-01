@@ -80,7 +80,7 @@ def see(model, image, mime):
     encoded = base64.b64encode(image).decode("ascii")
     content = [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{encoded}"}}]
     try:
-        reply = model.chat([{"role": "user", "content": content}], schema=SEE_SCHEMA, effort="low", max_output=2000, timeout=60, attempts=2)
+        reply = model.chat([{"role": "user", "content": content}], schema=SEE_SCHEMA, effort="low", max_output=5000, timeout=60, attempts=2)
         data = json.loads(reply.text)
         return Seen(data["kind"], data["visible_text"], data["payment_state"])
     except _FAILED:
@@ -103,7 +103,7 @@ def triage(model, text):
         {"role": "user", "content": text},
     ]
     try:
-        data = json.loads(model.chat(messages, schema=TRIAGE_SCHEMA, effort="low", max_output=800, timeout=20, attempts=1).text)
+        data = json.loads(model.chat(messages, schema=TRIAGE_SCHEMA, effort="low", max_output=3000, timeout=20, attempts=1).text)
     except _FAILED:
         return None
     if data.get("kind") not in TRIAGE_KINDS or data.get("live_kind") not in (*LIVE_KINDS, "none"):
@@ -142,7 +142,7 @@ def pull_details(model, words, facts, now):
         {"role": "user", "content": words},
     ]
     try:
-        data = json.loads(model.chat(messages, schema=DETAILS_SCHEMA, effort="low", max_output=2500, timeout=45, attempts=2).text)
+        data = json.loads(model.chat(messages, schema=DETAILS_SCHEMA, effort="low", max_output=6000, timeout=45, attempts=2).text)
     except _FAILED:
         return {}
     allowed = _numbers(words) | set().union(*(_numbers(value) for value in facts.values()), set())
@@ -172,7 +172,7 @@ def translate(model, lines, language):
         {"role": "user", "content": json.dumps(lines, ensure_ascii=False)},
     ]
     try:
-        out = json.loads(model.chat(messages, schema=TRANSLATE_SCHEMA, effort="low", max_output=1500, timeout=30, attempts=1).text)["lines"]
+        out = json.loads(model.chat(messages, schema=TRANSLATE_SCHEMA, effort="low", max_output=5000, timeout=30, attempts=1).text)["lines"]
     except _FAILED:
         return None
     if len(out) != len(lines) or any(_numbers(old) != _numbers(new) or not new.strip() for old, new in zip(lines, out)):

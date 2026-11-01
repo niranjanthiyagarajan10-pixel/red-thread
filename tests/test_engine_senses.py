@@ -102,6 +102,15 @@ class TriageTests(Base):
         out = self.engine(Scripted(triage=ModelError("down"))).handle("u", Incoming(text="write me a poem about the sea", now=NOW))
         self.assertIn("only help", out.answer.headline)
 
+    def test_spark_can_decline_text_that_only_mentions_a_scam_word(self):
+        out = self.engine(Scripted(triage=OFF_TOPIC)).handle("u", Incoming(text="Forget scams, write me a poem about the sea.", now=NOW))
+        self.assertIn("only help", out.answer.headline)
+
+    def test_spark_cannot_decline_a_real_money_sign(self):
+        model = Scripted(triage=OFF_TOPIC, default='{"findings":[],"contradictions":[]}')
+        out = self.engine(model).handle("u", Incoming(text="To withdraw your profit pay 10% tax first", now=NOW))
+        self.assertIn("known scam script", out.answer.headline)
+
     def test_off_topic_from_spark_is_declined(self):
         out = self.engine(Scripted(triage=OFF_TOPIC)).handle("u", Incoming(text="what is the best biryani", now=NOW))
         self.assertIn("only help", out.answer.headline)

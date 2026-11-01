@@ -203,14 +203,13 @@ class Engine:
             return self._collect(session, said, incoming.now)
         if paid_on_screen or money_has_moved(f"{said} {screenshot}"):
             return self._loss(session, voice or incoming.text, screenshot)
-        if said and not _GREETING.match(said):
-            found = senses.triage(self.model, said)
-            if found and found[0] == "live_pressure":
-                live = found[1] if found[1] != "none" else "fake_authority"
-                return self._finish(session, templates.during_call(live, session.language))
-            if found and found[0] == "money_gone":
-                return self._loss(session, said, screenshot)
-        return self._check_message(session, said)
+        found = senses.triage(self.model, said) if said and not _GREETING.match(said) else None
+        if found and found[0] == "live_pressure":
+            live = found[1] if found[1] != "none" else "fake_authority"
+            return self._finish(session, templates.during_call(live, session.language))
+        if found and found[0] == "money_gone":
+            return self._loss(session, said, screenshot)
+        return self._check_message(session, said, off_topic=bool(found) and found[0] == "off_topic")
 
     def _finish(self, session, answer, sheet=None, link_offer=False):
         """Nothing leaves without passing the format check. If something slips, the safe welcome goes instead."""
@@ -271,12 +270,12 @@ class Engine:
             answer.proof = (extra + answer.proof)[:3]
         return self._finish(session, answer)
 
-    def _check_message(self, session, said):
+    def _check_message(self, session, said, off_topic=False):
         if not said.strip() or _GREETING.match(said):
             return self._finish(session, templates.welcome(session.language))
         chat = Conversation(session.user, [Turn(0, "them", said)])
         flags = money_flags(said)
-        if not flags and not keyword_findings(chat, "them") and not _ON_TOPIC.search(said):
+        if not flags and not keyword_findings(chat, "them") and (off_topic or not _ON_TOPIC.search(said)):
             return self._finish(session, templates.decline(session.language))
         report = self._analyze(chat, "them")
         session.chat, session.other, session.findings = chat, "them", report.findings
