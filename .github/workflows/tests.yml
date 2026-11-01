@@ -1,0 +1,32 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Run tests
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python -m unittest discover -v -s tests -t . 2>&1 | tee test-output.txt
+      - name: Check the real voice note test ran
+        run: |
+          grep -E "test_a_real_ogg_opus_voice_note.*ok$|^OK" test-output.txt
+          ! grep -E "test_a_real_ogg_opus_voice_note.*skipped" test-output.txt
+          grep -E "^OK" test-output.txt
+      - name: Run planted errors
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python -m redthread.evals && python -m redthread.evals --fresh
