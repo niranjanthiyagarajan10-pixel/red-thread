@@ -10,8 +10,8 @@ import os
 import re
 import secrets
 import sqlite3
+import threading
 from dataclasses import dataclass, field
-from pathlib import Path
 
 from redthread.model import HOME
 from redthread.shield import check_relay
@@ -70,6 +70,7 @@ class RelayResult:
 class Network:
     def __init__(self, path, salt=None):
         self.salt = salt if salt is not None else _default_salt()
+        self._lock = threading.RLock()
         self._db = sqlite3.connect(str(path), check_same_thread=False)
         self._db.executescript(
             "create table if not exists identifiers (case_id text, kind text, digest text);"
@@ -79,6 +80,12 @@ class Network:
 
     def close(self):
         self._db.close()
+
+    def forget_case(self, case_id):
+        with self._lock, self._db:
+            self._db.execute("delete from identifiers where case_id = ?", (case_id,))
+            self._db.execute("delete from scripts where case_id = ?", (case_id,))
+            self._db.execute("delete from opt_ins where from_case = ? or to_case = ?", (case_id, case_id))
 
     def _digest(self, kind, value):
         return hmac.new(self.salt, f"{kind}:{_normalize(kind, value)}".encode("utf-8"), hashlib.sha256).hexdigest()
@@ -90,41 +97,44 @@ class Network:
 
     def add_case(self, case_id, identifiers, script_text=None, images=None):
         rows = [(case_id, kind, digest) for kind, digest in self._digests(identifiers, images)]
-        self._db.executemany("insert into identifiers values (?, ?, ?)", rows)
         hashes = fingerprint(script_text or "", self.salt)
-        if hashes:
-            self._db.execute("insert into scripts values (?, ?)", (case_id, json.dumps(sorted(hashes))))
-        self._db.commit()
+        with self._lock, self._db:
+            self._db.executemany("insert into identifiers values (?, ?, ?)", rows)
+            if hashes:
+                self._db.execute("insert into scripts values (?, ?)", (case_id, json.dumps(sorted(hashes))))
 
     def matches(self, case_id, identifiers, script_text=None, images=None):
         found = {}
-        for kind, digest in self._digests(identifiers, images):
-            rows = self._db.execute(
-                "select distinct case_id from identifiers where kind = ? and digest = ? and case_id != ?",
-                (kind, digest, case_id),
-            )
-            for (other,) in rows:
-                found.setdefault(other, []).append(kind)
         hashes = fingerprint(script_text or "", self.salt)
-        if hashes:
-            for other, stored in self._db.execute("select case_id, hashes from scripts where case_id != ?", (case_id,)):
-                if similarity(hashes, set(json.loads(stored))) >= SCRIPT_MATCH:
-                    found.setdefault(other, []).append("script")
+        with self._lock:
+            for kind, digest in self._digests(identifiers, images):
+                rows = self._db.execute(
+                    "select distinct case_id from identifiers where kind = ? and digest = ? and case_id != ?",
+                    (kind, digest, case_id),
+                )
+                for (other,) in rows.fetchall():
+                    found.setdefault(other, []).append(kind)
+            if hashes:
+                stored_rows = self._db.execute("select case_id, hashes from scripts where case_id != ?", (case_id,)).fetchall()
+                for other, stored in stored_rows:
+                    if similarity(hashes, set(json.loads(stored))) >= SCRIPT_MATCH:
+                        found.setdefault(other, []).append("script")
         return [Match(other, list(dict.fromkeys(kinds))) for other, kinds in found.items()]
 
     def report_count(self, case_id, identifiers, script_text=None, images=None):
         return len(self.matches(case_id, identifiers, script_text, images))
 
     def opt_in(self, from_case, to_case):
-        self._db.execute("insert or ignore into opt_ins values (?, ?)", (from_case, to_case))
-        self._db.commit()
+        with self._lock, self._db:
+            self._db.execute("insert or ignore into opt_ins values (?, ?)", (from_case, to_case))
 
     def linked(self, first, second):
-        rows = self._db.execute(
-            "select count(*) from opt_ins where (from_case = ? and to_case = ?) or (from_case = ? and to_case = ?)",
-            (first, second, second, first),
-        )
-        return rows.fetchone()[0] == 2
+        with self._lock:
+            rows = self._db.execute(
+                "select count(*) from opt_ins where (from_case = ? and to_case = ?) or (from_case = ? and to_case = ?)",
+                (first, second, second, first),
+            )
+            return rows.fetchone()[0] == 2
 
     def relay(self, from_case, to_case, text, translate=None):
         """Carries a message between two people who both agreed. If translation fails, the original still goes."""

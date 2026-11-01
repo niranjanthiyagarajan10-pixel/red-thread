@@ -5,8 +5,9 @@ does anything slower run. Spark can raise an alarm the rules missed, but it can 
 With no model at all, every path still answers from rules and templates.
 """
 import re
-from dataclasses import dataclass, field
-from datetime import datetime
+import traceback
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 
 from redthread import senses, templates
@@ -27,6 +28,8 @@ _ON_TOPIC = re.compile(
     r"|invest|police|forward|message|\bcall\b|ठग|पैसे|மோசடி|பணம்",
     re.I,
 )
+_DELETE = re.compile(r"^\s*(delete my data|delete my case|मेरा डेटा हटाओ|என் தரவை நீக்கு)\W*$", re.I)
+_CHAT_KEPT_FOR = timedelta(hours=1)
 _NEEDS_A_CASE = {"held", "eligible", "request", "credit"}
 _STORY_LIMIT = 1500
 _QUESTIONS = {
@@ -76,6 +79,7 @@ class Session:
     words: list = field(default_factory=list)
     asking: str = None
     images: list = field(default_factory=list)
+    chat_at: datetime = None
 
 
 def _detect_language(text, current):
@@ -91,16 +95,62 @@ def _join(*parts):
 
 
 class Engine:
-    def __init__(self, network, model=None):
+    def __init__(self, network, model=None, store=None):
         self.network = network
         self.model = model
+        self.store = store
         self.sessions = {}
 
     def session(self, user):
-        return self.sessions.setdefault(user, Session(user))
+        if user not in self.sessions:
+            self.sessions[user] = self._load(user)
+        return self.sessions[user]
+
+    def is_new(self, user):
+        return user not in self.sessions and not (self.store and self.store.load(user))
+
+    def _load(self, user):
+        saved = self.store.load(user) if self.store else None
+        if not saved:
+            return Session(user)
+        case = Case(**saved.pop("case")) if saved.get("case") else None
+        return Session(user, case=case, **{key: value for key, value in saved.items() if key != "case"})
+
+    def _save(self, session):
+        if self.store:
+            self.store.save(session.user, {
+                "language": session.language, "facts": session.facts, "spoken": session.spoken,
+                "words": session.words, "asking": session.asking,
+                "case": asdict(session.case) if session.case else None,
+            })
+
+    def forget(self, user):
+        self.network.forget_case(user)
+        if self.store:
+            self.store.delete(user)
+        self.sessions[user] = Session(user)
 
     def handle(self, user, incoming):
+        """A crash never reaches the person. They get the safe welcome, and the error goes to the log."""
+        incoming.now = incoming.now or datetime.now()
         session = self.session(user)
+        try:
+            out = self._route(session, incoming)
+        except Exception:
+            traceback.print_exc()
+            return self._finish(session, templates.welcome(session.language))
+        if self.sessions.get(user) is session:
+            self._save(session)
+        return out
+
+    def _route(self, session, incoming):
+        user = session.user
+        if session.chat_at and incoming.now - session.chat_at > _CHAT_KEPT_FOR:
+            session.chat, session.other, session.findings, session.identifiers, session.chat_at = None, None, [], {}, None
+        if _DELETE.match(incoming.text):
+            self.forget(user)
+            session = self.session(user)
+            return self._finish(session, Answer("Your data is deleted.", [], "Send anything to start again."))
         session.images = [image for image, _ in incoming.images]
         voice = incoming.voice_text
         if incoming.audio:
@@ -116,6 +166,7 @@ class Engine:
         if incoming.button:
             return self._press(session, incoming.button)
         if incoming.chat_export:
+            session.chat_at = incoming.now
             return self._receive_chat(session, scrub(incoming.chat_export).text)
 
         screenshot = scrub(incoming.screenshot_text).text
