@@ -7,12 +7,13 @@ With no model at all, every path still answers from rules and templates.
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
 
 from redthread import senses, templates
-from redthread.amounts import format_rupees
+from redthread.amounts import format_rupees, parse_amounts
 from redthread.case import Case, apply_message, classify_message, next_step
 from redthread.conversation import Conversation, Turn, parse_whatsapp_export
-from redthread.facts import Reconciled, extract_identifiers, reconcile
+from redthread.facts import Reconciled, extract_identifiers, payment_date, reconcile
 from redthread.model import BudgetExceeded
 from redthread.reply import Answer, check_answer
 from redthread.rules import during_call, money_flags, money_has_moved
@@ -35,6 +36,8 @@ _QUESTIONS = {
     "district": "Which district?",
     "bank": "Which bank or wallet did the money leave?",
     "paid_on": "On what date did you pay?",
+    "amount": "How much money left your account? Send the amount.",
+    "reference": "What is the transaction ID or UTR? It is on the payment screen or the bank SMS.",
 }
 _MORE_STORY = "Please tell us a little more: how it started, what they said and how you paid."
 _REFUND_REMARKS = "I request restoration of the amount held against my complaint, to my own bank account."
@@ -238,6 +241,11 @@ class Engine:
             session.facts["reference"] = result.reference
         if spoken:
             session.words.append(spoken)
+        printed_date = payment_date(screenshot)
+        if printed_date:
+            session.facts["paid_on"] = printed_date
+        if result.amount is None and parse_amounts(session.spoken) and parse_amounts(screenshot):
+            session.asking = "amount"
         self._write_story(session)
         identifiers = extract_identifiers(f"{spoken} {screenshot}")
         session.facts["suspect_upi"] = identifiers["upi"]
@@ -247,6 +255,8 @@ class Engine:
         matches = self.network.matches(session.user, kept, images=session.images)
         self.network.add_case(session.user, kept, images=session.images)
         answer = templates.after_loss(result, session.language)
+        if result.questions and session.language != "en" and self.model:
+            answer.proof = senses.translate(self.model, answer.proof, session.language) or answer.proof
         if matches:
             answer.proof = answer.proof + ["Someone else reported this same account. If you both agree, you can talk."]
         return self._finish(session, answer, link_offer=bool(matches))
@@ -266,24 +276,47 @@ class Engine:
         sheet = filing_sheet(session.facts)
         problems = {item.label for item in sheet.fields if item.problems}
         labels = {
-            "Incident details": "story", "Approximate Date & Time": "when", "State": "state",
-            "District": "district", "Bank, wallet or merchant": "bank", "Date of transaction": "paid_on",
+            "Fraud amount": "amount", "Incident details": "story", "Approximate Date & Time": "when", "State": "state",
+            "District": "district", "Bank, wallet or merchant": "bank", "Transaction ID or UTR": "reference",
+            "Date of transaction": "paid_on",
         }
         order = [labels[label] for label in labels if label in problems]
         return sheet, order
 
     def _collect(self, session, said, now):
         field_name = session.asking
+        if field_name == "amount":
+            amount = self._read_amount(said)
+            if amount is None:
+                return self._say(session, Answer("We need the exact amount.", [], _QUESTIONS["amount"]))
+            session.facts["amount"] = amount
+            self._write_story(session)
+            return self._next_question(session)
+        if field_name == "reference":
+            found = extract_identifiers(said)["reference"]
+            session.facts["reference"] = found[0] if found else said.strip()
+            self._write_story(session)
+            return self._next_question(session)
         if field_name == "story":
             session.words.append(said)
         pulled = senses.pull_details(self.model, " ".join(session.words + [said]), self._known(session), now)
         for name in ("when", "state", "district", "police_station", "bank", "paid_on"):
-            if pulled.get(name):
+            if pulled.get(name) and not session.facts.get(name):
                 session.facts[name] = pulled[name]
         self._write_story(session, pulled.get("story_english"))
         if field_name != "story" and not pulled.get(field_name):
             session.facts[field_name] = self._read_answer(field_name, said, now)
         return self._next_question(session)
+
+    def _read_amount(self, said):
+        found = parse_amounts(said)
+        if found:
+            return found[0].value
+        bare = re.fullmatch(r"\s*(\d[\d,]*(?:\.\d+)?)\s*", said)
+        try:
+            return Decimal(bare.group(1).replace(",", "")) if bare else None
+        except InvalidOperation:
+            return None
 
     def _known(self, session):
         return {key: session.facts[key] for key in ("amount", "reference") if session.facts.get(key) is not None}
@@ -297,6 +330,10 @@ class Engine:
 
     def _next_question(self, session):
         sheet, missing = self._missing(session)
+        if session.case and session.case.state == "new":
+            session.asking = None
+            amount = format_rupees(session.facts["amount"])
+            return self._say(session, Answer(f"Thanks. We have {amount}.", [], next_step(session.case)))
         if not missing:
             session.asking = None
             return self._say(session, Answer(
@@ -365,5 +402,7 @@ class Engine:
         kept = {kind: ids.get(kind, []) for kind in ("upi", "phone", "link")}
         said = "\n".join(turn.text for turn in session.chat.turns if turn.speaker == session.other) if session.chat else ""
         self.network.add_case(session.user, kept, script_text=said)
-        answer = Answer("Here is your report, one field at a time.", [], "Enter it under Report Suspect on cybercrime.gov.in. You submit it.")
+        missing = [item.label for item in sheet.fields if item.problems]
+        proof = ["You will need to add: " + ", ".join(missing) + "."] if missing else []
+        answer = Answer("Here is your report, one field at a time.", proof, "Enter it under Report Suspect on cybercrime.gov.in. You submit it.")
         return self._say(session, answer, sheet)

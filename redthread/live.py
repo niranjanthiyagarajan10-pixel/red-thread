@@ -61,6 +61,8 @@ def main(argv=None):
     run.step("Spark catches pressure the rules miss", "sam", text="the bank fellow is making me open a helper program on my mobile")
     run.step("Spark sees a loss the rules miss", "sam", text="that man emptied everything, nothing left with me")
     run.step("A voice note and a screenshot", "victim", audio=(clips / "loss.wav").read_bytes(), images=(png,))
+    if engine.session("victim").asking == "amount":
+        run.step("They settle the amount", "victim", text="38000")
     run.step("The helpline number arrives", "victim", text="Acknowledgement No 30000000000012")
     out = run.step("One voice note fills the form", "victim", audio=(clips / "story.wav").read_bytes())
     session = engine.session("victim")
