@@ -1,5 +1,6 @@
 """Calls Muse Spark through the Meta Model API, with a spending cap, a cache and retries."""
 import hashlib
+import io
 import json
 import os
 import random
@@ -7,6 +8,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import wave
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -17,6 +19,15 @@ HOME = Path(os.environ.get("REDTHREAD_HOME", Path.home() / "muse-spike"))
 MAX_ATTEMPTS = 5
 RETRY_STATUSES = {408, 429, 500, 502, 503, 504}
 CHARS_PER_TOKEN_WORST_CASE = 2
+IMAGE_CHARS_WORST_CASE = 20000
+TRANSCRIBE = "muse-voice-transcribe-1.0"
+TRANSCRIBE_PER_HOUR = 0.18
+
+
+def _content_chars(content):
+    if isinstance(content, str):
+        return len(content)
+    return sum(len(part.get("text", "")) if part.get("type") == "text" else IMAGE_CHARS_WORST_CASE for part in content)
 
 
 class ModelError(Exception):
@@ -76,6 +87,14 @@ class Reply:
     cached: bool = False
 
 
+def _wav_seconds(wav):
+    try:
+        with wave.open(io.BytesIO(wav), "rb") as audio:
+            return audio.getnframes() / audio.getframerate()
+    except (wave.Error, EOFError) as error:
+        raise ModelError("Audio is not a WAV file.") from error
+
+
 def _http_post(url, headers, body, timeout):
     request = urllib.request.Request(url, data=body, headers=headers, method="POST")
     try:
@@ -101,7 +120,43 @@ class MetaModel:
         self.sleep = sleep
         self.timeout = timeout
 
-    def chat(self, messages, schema=None, effort="low", max_output=4000):
+    def transcribe(self, wav, language_bias=None, keywords=None):
+        """Voice Transcribe takes only WAV. Other audio must be converted first."""
+        seconds = _wav_seconds(wav)
+        settings = {"mode": "ENDPOINTING", "model": TRANSCRIBE, "audioEncoding": "WAV"}
+        if language_bias:
+            settings["languageBias"] = language_bias
+        if keywords:
+            settings["keywords"] = keywords
+        encoded = json.dumps(settings, ensure_ascii=False, sort_keys=True).encode("utf-8") + b"\n" + hashlib.sha256(wav).digest()
+        cached = self._read_cache(encoded)
+        if cached:
+            return cached
+
+        boundary = "redthread" + hashlib.sha256(wav).hexdigest()[:24]
+        body = (
+            f'--{boundary}\r\nContent-Disposition: form-data; name="request"\r\nContent-Type: application/json\r\n\r\n'.encode("ascii")
+            + json.dumps(settings, ensure_ascii=False).encode("utf-8")
+            + f'\r\n--{boundary}\r\nContent-Disposition: form-data; name="audio"; filename="note.wav"\r\nContent-Type: audio/wav\r\n\r\n'.encode("ascii")
+            + wav
+            + f"\r\n--{boundary}--\r\n".encode("ascii")
+        )
+        ticket = self.ledger.reserve(seconds / 3600 * TRANSCRIBE_PER_HOUR)
+        try:
+            raw = self._post("/asr/transcribe", body, f"multipart/form-data; boundary={boundary}", self.timeout, MAX_ATTEMPTS)
+            data = json.loads(raw)
+            reply = Reply(text=data["transcript"], cost=int(data.get("audioDurationMs", seconds * 1000)) / 3_600_000 * TRANSCRIBE_PER_HOUR)
+        except (ValueError, KeyError, TypeError) as error:
+            self.ledger.settle(ticket, 0.0)
+            raise ModelError("Transcribe reply had an unexpected shape.") from error
+        except Exception:
+            self.ledger.settle(ticket, 0.0)
+            raise
+        self.ledger.settle(ticket, reply.cost)
+        self._write_cache(encoded, reply)
+        return reply
+
+    def chat(self, messages, schema=None, effort="low", max_output=4000, timeout=None, attempts=None):
         body = {
             "model": self.model,
             "messages": messages,
@@ -116,10 +171,11 @@ class MetaModel:
         if cached:
             return cached
 
-        input_chars = sum(len(message["content"]) for message in messages)
+        input_chars = sum(_content_chars(message["content"]) for message in messages)
         ticket = self.ledger.reserve(self._cost(input_chars / CHARS_PER_TOKEN_WORST_CASE, max_output))
         try:
-            reply = self._send(encoded)
+            raw = self._post("/chat/completions", encoded, "application/json", timeout or self.timeout, attempts or MAX_ATTEMPTS)
+            reply = self._parse(raw)
         except Exception:
             self.ledger.settle(ticket, 0.0)
             raise
@@ -127,17 +183,17 @@ class MetaModel:
         self._write_cache(encoded, reply)
         return reply
 
-    def _send(self, encoded):
-        headers = {"Authorization": f"Bearer {self._api_key}", "Content-Type": "application/json"}
+    def _post(self, path, body, content_type, timeout, attempts):
+        headers = {"Authorization": f"Bearer {self._api_key}", "Content-Type": content_type}
         last_status = None
-        for attempt in range(MAX_ATTEMPTS):
-            status, raw = self.transport(f"{BASE_URL}/chat/completions", headers, encoded, self.timeout)
+        for attempt in range(attempts):
+            status, raw = self.transport(f"{BASE_URL}{path}", headers, body, timeout)
             if status == 200:
-                return self._parse(raw)
+                return raw
             last_status = status
             if status != 0 and status not in RETRY_STATUSES:
                 break
-            if attempt + 1 < MAX_ATTEMPTS:
+            if attempt + 1 < attempts:
                 self.sleep(min(30, 2 ** attempt) + random.random())
         raise ModelError(f"Model call failed with status {last_status}.")
 
