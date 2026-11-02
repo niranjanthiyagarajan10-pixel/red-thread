@@ -21,15 +21,17 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qsl, urlparse
 
-from redthread import proof_demo, templates
+from redthread import proof_demo, templates, thread_demo
 from redthread.channel import WhatsAppChannel
 from redthread.engine import Engine, Incoming
 from redthread.knot_session import Knots
 from redthread.knot_session import NotAllowed as KnotRefused
-from redthread.model import HOME, Ledger, MetaModel, load_api_key
+from redthread.model import HOME, WONDER, Ledger, MetaModel, load_api_key
 from redthread.network import Network
 from redthread.proof_call import Calls, NotAllowed
 from redthread.store import Store
+from redthread.thread import NotAllowed as ThreadRefused
+from redthread.thread import Threads
 from redthread.whatsapp import Client, parse_webhook, verify_challenge, verify_signature
 from redthread.world import demo_events
 
@@ -44,13 +46,14 @@ MAX_EVENT_WAIT_SECONDS = 25
 _PROOF_PATH = re.compile(r"^/api/proof/([A-Za-z0-9_-]{10,64})/([a-z]+)(?:/(\d+))?$")
 _KNOT_PATH = re.compile(r"^/api/knot/([A-Za-z0-9_-]{10,64})/([a-z]+)$")
 _CARD_PATH = re.compile(r"^/api/card/([A-Za-z0-9_-]{10,64})$")
-_TOKEN_IN_PATH = re.compile(r"(/(?:proof|knot|card)/)[A-Za-z0-9_-]{10,64}")
+_THREAD_PATH = re.compile(r"^/api/thread/([A-Za-z0-9_-]{10,64})(?:/([a-z]+))?$")
+_TOKEN_IN_PATH = re.compile(r"(/(?:proof|knot|card|thread)/)[A-Za-z0-9_-]{10,64}")
 WEB = Path(__file__).resolve().parent / "web"
-_PAGES = {"/": "index.html", "/knot": "knot.html"}
-_STATIC = re.compile(r"^/static/([a-z0-9_-]+\.(css|js|svg|png|webp|ico|woff2))$")
+_PAGES = {"/": "index.html", "/knot": "knot.html", "/match": "match.html"}
+_STATIC = re.compile(r"^/static/([a-z0-9_-]+\.(css|js|svg|png|jpg|webp|ico|woff2))$")
 _TYPES = {
     "html": "text/html; charset=utf-8", "css": "text/css; charset=utf-8", "js": "text/javascript; charset=utf-8",
-    "svg": "image/svg+xml", "png": "image/png", "webp": "image/webp", "ico": "image/x-icon", "woff2": "font/woff2",
+    "svg": "image/svg+xml", "png": "image/png", "jpg": "image/jpeg", "webp": "image/webp", "ico": "image/x-icon", "woff2": "font/woff2",
 }
 _PAGE_HEADERS = {
     "Content-Security-Policy": "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; "
@@ -86,6 +89,7 @@ class App:
         self.clips = clips
         self.pool = ThreadPoolExecutor(8)
         self.knots = None
+        self.threads = None
         self.rate_limit = 60
         self._calls = defaultdict(deque)
         self._lock = threading.Lock()
@@ -98,12 +102,14 @@ class App:
         engine = Engine(Network(data_dir / "network.sqlite", salt=salt), model=model, store=store)
         judge_network = Network(":memory:", salt=salt)
         judge_network.add_case("simulated-earlier-victim", {"upi": [SEED_UPI]})
+        judge_network.add_case("simulated-earlier-report", {"upi": [thread_demo.SEEDED_UPI]})
         judge_engine = Engine(judge_network, model=model)
         channel = WhatsAppChannel(engine, client, store) if client else None
         app = cls(engine, judge_engine, channel, store, app_secret, verify_token, inline_webhook, clips)
         engine.calls = Calls(model, on_end=app._call_ended, base_url=public_url)
         judge_engine.calls = Calls(model, base_url=public_url)
         app.knots = Knots(model)
+        app.threads = Threads(model, model.using(WONDER) if model else None, engine.network, judge_network)
         return app
 
     def close(self):
@@ -200,8 +206,10 @@ def _handler(app):
         timeout = 65
 
         def log_message(self, format, *args):
-            path = _TOKEN_IN_PATH.sub(r"\1*", urlparse(self.path).path)
-            sys.stderr.write(f"{self.command} {path} {args[1] if len(args) > 1 else ''}\n")
+            # A connection that times out before sending anything has no path yet.
+            path = _TOKEN_IN_PATH.sub(r"\1*", urlparse(getattr(self, "path", "") or "").path)
+            command = getattr(self, "command", "") or "-"
+            sys.stderr.write(f"{command} {path} {args[1] if len(args) > 1 else ''}\n")
 
         def _reply(self, status, body=b"", content_type="application/json", headers=None):
             self.send_response(status)
@@ -209,8 +217,12 @@ def _handler(app):
             self.send_header("Content-Length", str(len(body)))
             for name, value in (headers or {}).items():
                 self.send_header(name, value)
-            self.end_headers()
-            self.wfile.write(body)
+            try:
+                self.end_headers()
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+                # The person left the page before a slow reply was ready. Nothing to send it to.
+                self.close_connection = True
 
         def _file(self, path):
             if not path.is_file():
@@ -232,7 +244,9 @@ def _handler(app):
 
         def do_GET(self):
             parts = urlparse(self.path)
-            if parts.path == "/healthz":
+            if parts.path == "/favicon.ico":
+                self._reply(204)
+            elif parts.path == "/healthz":
                 self._json(200, {"ok": True})
             elif parts.path == "/webhook":
                 challenge = verify_challenge(dict(parse_qsl(parts.query)), app.verify_token)
@@ -246,6 +260,11 @@ def _handler(app):
                 self._proof_get(parts)
             elif parts.path.startswith("/api/knot/"):
                 self._knot_get(parts)
+            elif _THREAD_PATH.match(parts.path) and not _THREAD_PATH.match(parts.path).group(2):
+                thread = app.threads.find(_THREAD_PATH.match(parts.path).group(1))
+                self._json(200, app.threads.state(thread)) if thread else self._reply(404)
+            elif parts.path == "/api/example":
+                self._json(200, {"name": thread_demo.NAME, "chat": thread_demo.CHAT, "profile_image": "/static/example-profile.jpg"})
             elif _CARD_PATH.match(parts.path):
                 card = app.knots.card(_CARD_PATH.match(parts.path).group(1))
                 self._json(200, card) if card else self._reply(404)
@@ -326,6 +345,54 @@ def _handler(app):
                 traceback.print_exc()
                 self._json(500, {"error": "Something went wrong. Try again."})
 
+        def _thread_post(self, path, body):
+            match = _THREAD_PATH.match(path)
+            if path != "/api/thread" and not (match and match.group(2)):
+                self._reply(404)
+                return
+            if path != "/api/thread" and not app.threads.find(match.group(1)):
+                self._reply(404)
+                return
+            action = match.group(2) if match else "create"
+            if action in ("create", "profile", "chat", "check") and not app.allowed(self.client_address[0]):
+                self._json(429, {"error": "Too many tries. Wait a minute and try again."})
+                return
+            try:
+                data = json.loads(body or b"{}")
+                if not isinstance(data, dict):
+                    raise ValueError("Expected an object.")
+                if action == "create":
+                    thread = app.threads.create(str(data.get("name", "")), example=bool(data.get("example")))
+                    self._json(200, {"token": thread.token, "state": app.threads.state(thread)})
+                    return
+                token = match.group(1)
+                if action == "profile":
+                    images = data.get("images") or []
+                    if not isinstance(images, list):
+                        raise ValueError("Images must be a list.")
+                    thread = app.threads.add_profile(token, images=images, text=data.get("text"))
+                elif action == "chat":
+                    thread = app.threads.add_chat(token, str(data.get("text", "")))
+                elif action == "check":
+                    check = app.threads.check(token, str(data.get("kind", "")), str(data.get("value", "")))
+                    self._json(200, {"check": check})
+                    return
+                elif action == "forget":
+                    app.threads.forget(token)
+                    self._json(200, {"ok": True})
+                    return
+                else:
+                    self._reply(404)
+                    return
+                self._json(200, {"state": app.threads.state(thread)})
+            except ThreadRefused as error:
+                self._json(400, {"error": str(error)})
+            except (ValueError, AttributeError, TypeError):
+                self._json(400, {"error": "That request could not be read."})
+            except Exception:
+                traceback.print_exc()
+                self._json(500, {"error": "Something went wrong. Try again."})
+
         def do_POST(self):
             path = urlparse(self.path).path
             body = self._body()
@@ -342,6 +409,8 @@ def _handler(app):
                 self._proof_post(path, body)
             elif path == "/api/knot":
                 self._knot_create(body)
+            elif path == "/api/thread" or path.startswith("/api/thread/"):
+                self._thread_post(path, body)
             elif path.startswith("/api/knot/"):
                 self._knot_post(path, body)
             else:

@@ -14,7 +14,11 @@ from pathlib import Path
 
 BASE_URL = "https://api.meta.ai/v1"
 SPARK = "muse-spark-1.3"
-PRICE_PER_MILLION = {SPARK: (1.25, 4.25)}
+WONDER = "muse-wonder-1.0"
+PRICE_PER_MILLION = {SPARK: (1.25, 4.25), WONDER: (4.0, 20.0)}
+WEB_SEARCH_EACH = 0.0025
+WORST_CASE_SEARCHES = 10
+WORST_CASE_SEARCH_TOKENS = 40000
 HOME = Path(os.environ.get("REDTHREAD_HOME", Path.home() / "muse-spike"))
 MAX_ATTEMPTS = 5
 RETRY_STATUSES = {408, 429, 500, 502, 503, 504}
@@ -77,6 +81,15 @@ class Ledger:
 
 
 @dataclass
+class Found:
+    """A web-searched answer. Citations are (start, end, url) spans of text, so code can keep only sourced sentences."""
+    text: str
+    citations: list
+    searches: int = 0
+    cost: float = 0.0
+
+
+@dataclass
 class Reply:
     text: str
     prompt_tokens: int = 0
@@ -119,6 +132,10 @@ class MetaModel:
         self.transport = transport
         self.sleep = sleep
         self.timeout = timeout
+
+    def using(self, model):
+        """The same key, ledger and transport for another hosted model, such as Wonder for the investigator."""
+        return MetaModel(self._api_key, self.ledger, model=model, cache_dir=None, transport=self.transport, sleep=self.sleep, timeout=self.timeout)
 
     def transcribe(self, wav, language_bias=None, keywords=None):
         """Voice Transcribe takes only WAV. Other audio must be converted first."""
@@ -188,6 +205,48 @@ class MetaModel:
         self.ledger.settle(ticket, reply.cost)
         self._write_cache(encoded, reply)
         return reply
+
+    def search(self, instructions, text, effort="low", max_output=4000, timeout=None, attempts=None):
+        """The Responses API with web search. Never cached: the web changes, and the question can hold a person's chat words."""
+        body = {
+            "model": self.model,
+            "input": [{"role": "developer", "content": instructions}, {"role": "user", "content": text}],
+            "tools": [{"type": "web_search"}],
+            "reasoning": {"effort": effort},
+            "max_output_tokens": max_output,
+        }
+        worst = self._cost((len(instructions) + len(text)) / CHARS_PER_TOKEN_WORST_CASE + WORST_CASE_SEARCH_TOKENS, max_output)
+        ticket = self.ledger.reserve(worst + WEB_SEARCH_EACH * WORST_CASE_SEARCHES)
+        try:
+            raw = self._post("/responses", json.dumps(body, ensure_ascii=False).encode("utf-8"), "application/json", timeout or self.timeout, attempts or 2)
+            found = self._parse_found(raw)
+        except Exception:
+            self.ledger.settle(ticket, 0.0)
+            raise
+        self.ledger.settle(ticket, found.cost)
+        return found
+
+    def _parse_found(self, raw):
+        try:
+            data = json.loads(raw)
+            text, citations, searches = "", [], 0
+            for item in data["output"]:
+                if item.get("type") == "web_search_call":
+                    searches += 1
+                elif item.get("type") == "message":
+                    for part in item.get("content") or []:
+                        if part.get("type") != "output_text":
+                            continue
+                        offset = len(text)
+                        text += part.get("text", "")
+                        for note in part.get("annotations") or []:
+                            if note.get("type") == "url_citation" and note.get("url"):
+                                citations.append((offset + int(note["start_index"]), offset + int(note["end_index"]), note["url"]))
+            usage = data.get("usage") or {}
+            cost = self._cost(int(usage.get("input_tokens", 0)), int(usage.get("output_tokens", 0))) + WEB_SEARCH_EACH * searches
+            return Found(text, citations, searches, cost)
+        except (KeyError, IndexError, TypeError, ValueError, AttributeError) as error:
+            raise ModelError("Search reply had an unexpected shape.") from error
 
     def _post(self, path, body, content_type, timeout, attempts):
         headers = {"Authorization": f"Bearer {self._api_key}", "Content-Type": content_type}

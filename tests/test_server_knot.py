@@ -93,3 +93,10 @@ class LogTests(Running):
     def test_tokens_are_hidden_in_logs(self):
         for path in ("/api/knot/abcdefghijklmnop/state", "/api/card/abcdefghijklmnop", "/card/abcdefghijklmnop", "/proof/abcdefghijklmnop"):
             self.assertNotIn("abcdefghijklmnop", server._TOKEN_IN_PATH.sub(r"\1*", path))
+
+
+class QuietTimeoutTests(Running):
+    def test_logging_a_request_that_never_arrived_does_not_fail(self):
+        handler = server._handler(self.app).__new__(server._handler(self.app))
+        handler.client_address = ("127.0.0.1", 1)
+        handler.log_message("Request timed out: %r", "x")
