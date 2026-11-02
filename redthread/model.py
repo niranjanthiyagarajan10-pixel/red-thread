@@ -156,6 +156,12 @@ class MetaModel:
         self._write_cache(encoded, reply)
         return reply
 
+    def live_speech(self, on_turn, on_partial, on_lost, keywords=None, language_bias=None):
+        """The key stays in this class and in the server. It never reaches a browser."""
+        from redthread.live_speech import LiveSpeech
+
+        return LiveSpeech(self._api_key, self.ledger, on_turn, on_partial, on_lost, keywords, language_bias)
+
     def chat(self, messages, schema=None, effort="low", max_output=4000, timeout=None, attempts=None):
         body = {
             "model": self.model,

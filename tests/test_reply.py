@@ -86,5 +86,15 @@ class TemplateTests(unittest.TestCase):
         self.assertIn("fee", text)
 
 
+class QuotedWordsTests(unittest.TestCase):
+    def test_a_banned_word_inside_a_quote_does_not_lose_the_warning(self):
+        answer = Answer("This follows a known scam script.", ['Day 3: "this is not fake, I am no scammer"'], "Hold off on paying.")
+        self.assertEqual(check_answer(answer), [])
+
+    def test_our_own_words_are_still_checked(self):
+        answer = Answer("This person is a scammer.", ['Day 3: "hello"'], "Hold off on paying.")
+        self.assertEqual(check_answer(answer), ["banned_claim"])
+
+
 if __name__ == "__main__":
     unittest.main()

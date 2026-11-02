@@ -21,6 +21,10 @@ class Answer:
     buttons: list = field(default_factory=list)
 
 
+# These rules are about our claims. A quote is someone else's words, and a scam chat may well say "this is not fake".
+_QUOTED = re.compile(r'"[^"]*"')
+
+
 def render(answer):
     return "\n".join([answer.headline, *answer.proof, answer.next_step])
 
@@ -40,6 +44,6 @@ def check_answer(answer):
         problems.append("button_too_long")
     if len({label.casefold() for label in answer.buttons}) != len(answer.buttons):
         problems.append("duplicate_buttons")
-    if _BANNED.search(body):
+    if _BANNED.search(_QUOTED.sub("", body)):
         problems.append("banned_claim")
     return problems
