@@ -24,6 +24,8 @@ from urllib.parse import parse_qsl, urlparse
 from redthread import proof_demo, templates
 from redthread.channel import WhatsAppChannel
 from redthread.engine import Engine, Incoming
+from redthread.knot_session import Knots
+from redthread.knot_session import NotAllowed as KnotRefused
 from redthread.model import HOME, Ledger, MetaModel, load_api_key
 from redthread.network import Network
 from redthread.proof_call import Calls, NotAllowed
@@ -40,7 +42,24 @@ MAX_JUDGE_SESSIONS = 2000
 MAX_SIGNAL_BYTES = 64 * 1024
 MAX_EVENT_WAIT_SECONDS = 25
 _PROOF_PATH = re.compile(r"^/api/proof/([A-Za-z0-9_-]{10,64})/([a-z]+)(?:/(\d+))?$")
-_TOKEN_IN_PATH = re.compile(r"(/proof/)[A-Za-z0-9_-]{10,64}")
+_KNOT_PATH = re.compile(r"^/api/knot/([A-Za-z0-9_-]{10,64})/([a-z]+)$")
+_CARD_PATH = re.compile(r"^/api/card/([A-Za-z0-9_-]{10,64})$")
+_TOKEN_IN_PATH = re.compile(r"(/(?:proof|knot|card)/)[A-Za-z0-9_-]{10,64}")
+WEB = Path(__file__).resolve().parent / "web"
+_PAGES = {"/": "index.html", "/knot": "knot.html"}
+_STATIC = re.compile(r"^/static/([a-z0-9_-]+\.(css|js|svg|png|webp|ico|woff2))$")
+_TYPES = {
+    "html": "text/html; charset=utf-8", "css": "text/css; charset=utf-8", "js": "text/javascript; charset=utf-8",
+    "svg": "image/svg+xml", "png": "image/png", "webp": "image/webp", "ico": "image/x-icon", "woff2": "font/woff2",
+}
+_PAGE_HEADERS = {
+    "Content-Security-Policy": "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; "
+                               "style-src 'self'; script-src 'self'; frame-ancestors 'none'; base-uri 'none'",
+    "Permissions-Policy": "microphone=(self), camera=(self)",
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+    "Cache-Control": "no-cache",
+}
 
 
 class _BadRequest(Exception):
@@ -66,6 +85,7 @@ class App:
         self.inline_webhook = inline_webhook
         self.clips = clips
         self.pool = ThreadPoolExecutor(8)
+        self.knots = None
         self.rate_limit = 60
         self._calls = defaultdict(deque)
         self._lock = threading.Lock()
@@ -83,9 +103,12 @@ class App:
         app = cls(engine, judge_engine, channel, store, app_secret, verify_token, inline_webhook, clips)
         engine.calls = Calls(model, on_end=app._call_ended, base_url=public_url)
         judge_engine.calls = Calls(model, base_url=public_url)
+        app.knots = Knots(model)
         return app
 
     def close(self):
+        if self.knots:
+            self.knots.close()
         self.engine.calls.close()
         self.judge_engine.calls.close()
         self.pool.shutdown(wait=False)
@@ -180,12 +203,22 @@ def _handler(app):
             path = _TOKEN_IN_PATH.sub(r"\1*", urlparse(self.path).path)
             sys.stderr.write(f"{self.command} {path} {args[1] if len(args) > 1 else ''}\n")
 
-        def _reply(self, status, body=b"", content_type="application/json"):
+        def _reply(self, status, body=b"", content_type="application/json", headers=None):
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
+            for name, value in (headers or {}).items():
+                self.send_header(name, value)
             self.end_headers()
             self.wfile.write(body)
+
+        def _file(self, path):
+            if not path.is_file():
+                self._reply(404)
+                return
+            kind = path.suffix.lstrip(".")
+            headers = _PAGE_HEADERS if kind == "html" else {"X-Content-Type-Options": "nosniff", "Cache-Control": "no-cache"}
+            self._reply(200, path.read_bytes(), _TYPES[kind], headers)
 
         def _json(self, status, value):
             self._reply(status, json.dumps(value, ensure_ascii=False, default=_plain).encode("utf-8"))
@@ -211,8 +244,87 @@ def _handler(app):
                 self._json(200, app.world())
             elif parts.path.startswith("/api/proof/"):
                 self._proof_get(parts)
+            elif parts.path.startswith("/api/knot/"):
+                self._knot_get(parts)
+            elif _CARD_PATH.match(parts.path):
+                card = app.knots.card(_CARD_PATH.match(parts.path).group(1))
+                self._json(200, card) if card else self._reply(404)
+            elif parts.path in _PAGES:
+                self._file(WEB / _PAGES[parts.path])
+            elif re.match(r"^/card/[A-Za-z0-9_-]{10,64}$", parts.path):
+                self._file(WEB / "card.html")
+            elif _STATIC.match(parts.path):
+                self._file(WEB / "static" / _STATIC.match(parts.path).group(1))
             else:
                 self._reply(404)
+
+        def _knot_get(self, parts):
+            match = _KNOT_PATH.match(parts.path)
+            session = app.knots.find(match.group(1)) if match else None
+            if not session:
+                self._reply(404)
+            elif match.group(2) == "state":
+                self._json(200, session.state())
+            elif match.group(2) == "events":
+                query = dict(parse_qsl(parts.query))
+                try:
+                    after = max(0, int(query.get("after", 0)))
+                    wait = min(MAX_EVENT_WAIT_SECONDS, max(0.0, float(query.get("wait", 0))))
+                except ValueError:
+                    self._reply(400)
+                    return
+                rows, seen = session.events(after, wait)
+                self._json(200, {"events": rows, "next": seen})
+            else:
+                self._reply(404)
+
+        def _knot_create(self, body):
+            if not app.allowed(self.client_address[0]):
+                self._json(429, {"error": "Too many tries. Wait a minute and try again."})
+                return
+            try:
+                interests = json.loads(body or b"{}").get("interests")
+                if not isinstance(interests, list):
+                    raise ValueError("No interests.")
+                session = app.knots.create([str(item) for item in interests[:10]])
+                self._json(200, {"token": session.token, "state": session.state()})
+            except KnotRefused as error:
+                self._json(400, {"error": str(error)})
+            except (ValueError, AttributeError):
+                self._json(400, {"error": "Add at least one interest."})
+
+        def _knot_post(self, path, body):
+            match = _KNOT_PATH.match(path)
+            session = app.knots.find(match.group(1)) if match else None
+            if not session:
+                self._reply(404)
+                return
+            action = match.group(2)
+            if action == "audio":
+                self._reply(204 if session.audio(body) else 409)
+                return
+            try:
+                if action == "begin":
+                    session.begin()
+                elif action == "say":
+                    session.say(str(json.loads(body or b"{}").get("text", ""))[:2000])
+                elif action == "next":
+                    session.next()
+                elif action == "reask":
+                    later = app.knots.reask(session.token)
+                    self._json(200, {"token": later.token, "state": later.state()})
+                    return
+                else:
+                    self._reply(404)
+                    return
+                self._json(200, {"ok": True})
+            except KnotRefused as error:
+                self._json(403, {"error": str(error)})
+            except (ValueError, AttributeError):
+                self._json(400, {"error": "That request could not be read."})
+            except Exception:
+                traceback.print_exc()
+                self._json(500, {"error": "Something went wrong. Try again."})
 
         def do_POST(self):
             path = urlparse(self.path).path
@@ -228,6 +340,10 @@ def _handler(app):
                 self._proof_demo()
             elif path.startswith("/api/proof/"):
                 self._proof_post(path, body)
+            elif path == "/api/knot":
+                self._knot_create(body)
+            elif path.startswith("/api/knot/"):
+                self._knot_post(path, body)
             else:
                 self._reply(404)
 

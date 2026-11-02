@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Red Thread card</title>
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="/static/app.css">
+<link rel="icon" href="/static/knot.svg" type="image/svg+xml">
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="mark" href="/" aria-label="Red Thread home">
+      <svg viewBox="0 0 34 14" aria-hidden="true"><path d="M1 10H11C15.5 10 17 2.5 13 2.5S10.5 10 17 10H33" fill="none" stroke="#d71e28" stroke-width="2.2" stroke-linecap="round"/></svg>
+      Red Thread
+    </a>
+    <a class="btn btn-red" href="/knot">Tie your knot</a>
+  </div>
+</header>
+<main class="flow">
+  <section class="screen screen-enter" aria-labelledby="card-title">
+    <p class="eyebrow">Red Thread card</p>
+    <h1 class="headline" id="card-title">Checking this card</h1>
+    <p class="lede" id="card-text"></p>
+    <div class="ticket" id="ticket" hidden></div>
+    <div class="actions"><a class="link" href="/knot">Tie your own first knot</a></div>
+  </section>
+</main>
+<script type="module" src="/static/card.js"></script>
+</body>
+</html>

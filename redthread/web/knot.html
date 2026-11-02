@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tie your first knot. Red Thread</title>
+<link rel="stylesheet" href="/static/app.css">
+<link rel="icon" href="/static/knot.svg" type="image/svg+xml">
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="mark" href="/" aria-label="Red Thread home">
+      <svg viewBox="0 0 34 14" aria-hidden="true"><path d="M1 10H11C15.5 10 17 2.5 13 2.5S10.5 10 17 10H33" fill="none" stroke="#d71e28" stroke-width="2.2" stroke-linecap="round"/></svg>
+      Red Thread
+    </a>
+    <span class="small" id="where">First Knot</span>
+  </div>
+</header>
+
+<main class="flow">
+  <div class="progress" aria-hidden="true">
+    <svg viewBox="0 0 600 22" id="progress">
+      <line class="rail" x1="8" y1="11" x2="592" y2="11"/>
+      <line class="run" x1="8" y1="11" x2="592" y2="11" pathLength="1" stroke-dasharray="1" stroke-dashoffset="1" id="run"/>
+    </svg>
+  </div>
+
+  <section class="screen screen-enter" id="screen-interests" aria-labelledby="h-interests">
+    <p class="eyebrow">Step one</p>
+    <h1 class="headline" id="h-interests" tabindex="-1">Three things you love.</h1>
+    <p class="lede">Anything you could talk about for an hour. We'll ask about <strong>your</strong> life with them, never trivia.</p>
+    <form id="interests-form" autocomplete="off">
+      <div class="fields">
+        <label class="field"><span>1</span><input name="interest" maxlength="40" placeholder="Football" aria-label="First interest"></label>
+        <label class="field"><span>2</span><input name="interest" maxlength="40" placeholder="Filter coffee" aria-label="Second interest"></label>
+        <label class="field"><span>3</span><input name="interest" maxlength="40" placeholder="Old Tamil songs" aria-label="Third interest"></label>
+      </div>
+      <div class="chips" id="chips" aria-label="Ideas">
+        <button type="button" class="chip">Cricket</button>
+        <button type="button" class="chip">Trekking</button>
+        <button type="button" class="chip">Biryani</button>
+        <button type="button" class="chip">Running</button>
+        <button type="button" class="chip">Bollywood songs</button>
+        <button type="button" class="chip">Board games</button>
+      </div>
+      <div class="actions">
+        <button class="btn btn-red" type="submit" id="write">Write my questions</button>
+        <span class="small" id="interests-note">Nothing here is shown to anyone.</span>
+      </div>
+    </form>
+  </section>
+
+  <section class="screen" id="screen-start" hidden aria-labelledby="h-start">
+    <p class="eyebrow">Step two</p>
+    <h1 class="headline" id="h-start" tabindex="-1">First, three words. Out loud.</h1>
+    <p class="lede">We'll show you three random words. Saying them proves you're here right now, <strong>not a recording.</strong> Then three questions.</p>
+    <div class="actions">
+      <button class="btn btn-red" id="begin">Show the words</button>
+      <button class="link" id="begin-typed">I can't speak right now</button>
+    </div>
+    <p class="small" id="mic-note">Your mic is used only while you answer. Nothing is recorded.</p>
+  </section>
+
+  <section class="screen" id="screen-say" hidden aria-labelledby="h-say">
+    <p class="eyebrow" id="say-eyebrow">Say this</p>
+    <h1 class="visually-hidden" id="h-say" tabindex="-1">Say the three words</h1>
+    <div class="phrase" id="phrase" aria-live="polite"></div>
+    <div class="mic" id="mic"><i></i><span id="mic-text">Listening</span></div>
+    <p class="caption" id="phrase-caption" aria-live="polite"></p>
+    <div class="typed" id="phrase-typed" hidden><textarea rows="1" placeholder="Type the three words" aria-label="Type the three words"></textarea></div>
+    <div class="actions">
+      <button class="btn btn-ink" id="phrase-send" hidden>Send</button>
+      <button class="link" id="phrase-skip">Type the words instead</button>
+    </div>
+  </section>
+
+  <section class="screen" id="screen-question" hidden aria-labelledby="ask">
+    <p class="eyebrow" id="question-eyebrow"></p>
+    <h1 class="ask" id="ask" tabindex="-1"></h1>
+    <div class="mic" id="mic-2"><i></i><span id="mic-2-text">Listening</span></div>
+    <p class="caption" id="answer-caption" aria-live="polite"></p>
+    <div class="typed" id="answer-typed" hidden><textarea rows="2" placeholder="Type your answer" aria-label="Type your answer"></textarea></div>
+    <div class="actions">
+      <button class="btn btn-ink" id="done">Done</button>
+      <button class="link" id="type-instead">Type instead</button>
+    </div>
+  </section>
+
+  <section class="screen" id="screen-wait" hidden>
+    <p class="wait"><i></i><span id="wait-text">Writing your questions</span></p>
+  </section>
+
+  <section class="screen" id="screen-tied" hidden aria-labelledby="h-tied">
+    <svg class="knot" id="knot" viewBox="0 0 320 120" aria-hidden="true">
+      <path pathLength="1" d="M6 84H120C164 84 186 22 154 22C122 22 130 84 186 84H314"/>
+    </svg>
+    <h1 class="headline" id="h-tied" tabindex="-1">Your first knot is tied.</h1>
+    <p class="lede" id="tied-text"></p>
+    <div class="ticket" id="ticket"></div>
+    <div class="actions">
+      <button class="btn btn-red" id="copy">Copy your card link</button>
+      <a class="link" id="open-card" href="#">Open your card</a>
+    </div>
+    <div class="actions">
+      <button class="link" id="try-reask">Try a later re-check now</button>
+    </div>
+  </section>
+
+  <section class="screen" id="screen-loose" hidden aria-labelledby="h-loose">
+    <p class="eyebrow">Not tied yet</p>
+    <h1 class="headline" id="h-loose" tabindex="-1">Almost.</h1>
+    <p class="lede" id="loose-text"></p>
+    <div class="actions"><button class="btn btn-red" id="again">Try again</button></div>
+  </section>
+
+  <section class="screen" id="screen-reask" hidden aria-labelledby="reask-ask">
+    <p class="eyebrow">A later re-check</p>
+    <h1 class="ask" id="reask-ask" tabindex="-1"></h1>
+    <p class="small">Weeks from now, at a random moment, one detail from your intro comes back in new words. Someone else using your profile wouldn't know it.</p>
+    <div class="mic" id="mic-3"><i></i><span id="mic-3-text">Listening</span></div>
+    <p class="caption" id="reask-caption" aria-live="polite"></p>
+    <div class="typed" id="reask-typed" hidden><textarea rows="2" placeholder="Type your answer" aria-label="Type your answer"></textarea></div>
+    <div class="actions">
+      <button class="btn btn-ink" id="reask-done">Done</button>
+      <button class="link" id="reask-type">Type instead</button>
+    </div>
+    <p class="result" id="reask-result" aria-live="polite"></p>
+  </section>
+</main>
+<script type="module" src="/static/knot.js"></script>
+</body>
+</html>
