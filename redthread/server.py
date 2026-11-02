@@ -8,6 +8,7 @@ import base64
 import binascii
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -20,11 +21,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qsl, urlparse
 
-from redthread import templates
+from redthread import proof_demo, templates
 from redthread.channel import WhatsAppChannel
 from redthread.engine import Engine, Incoming
 from redthread.model import HOME, Ledger, MetaModel, load_api_key
 from redthread.network import Network
+from redthread.proof_call import Calls, NotAllowed
 from redthread.store import Store
 from redthread.whatsapp import Client, parse_webhook, verify_challenge, verify_signature
 from redthread.world import demo_events
@@ -35,6 +37,10 @@ DEMO_HELD = Decimal(40000)
 DEMO_RESTORABLE = Decimal(38000)
 RATE_WINDOW_SECONDS = 60
 MAX_JUDGE_SESSIONS = 2000
+MAX_SIGNAL_BYTES = 64 * 1024
+MAX_EVENT_WAIT_SECONDS = 25
+_PROOF_PATH = re.compile(r"^/api/proof/([A-Za-z0-9_-]{10,64})/([a-z]+)(?:/(\d+))?$")
+_TOKEN_IN_PATH = re.compile(r"(/proof/)[A-Za-z0-9_-]{10,64}")
 
 
 class _BadRequest(Exception):
@@ -50,7 +56,7 @@ def _plain(value):
 
 
 class App:
-    def __init__(self, engine, judge_engine, channel, store, app_secret, verify_token, inline_webhook=False):
+    def __init__(self, engine, judge_engine, channel, store, app_secret, verify_token, inline_webhook=False, clips=proof_demo.CLIPS):
         self.engine = engine
         self.judge_engine = judge_engine
         self.channel = channel
@@ -58,13 +64,14 @@ class App:
         self.app_secret = app_secret
         self.verify_token = verify_token
         self.inline_webhook = inline_webhook
+        self.clips = clips
         self.pool = ThreadPoolExecutor(8)
         self.rate_limit = 60
         self._calls = defaultdict(deque)
         self._lock = threading.Lock()
 
     @classmethod
-    def build(cls, data_dir, model, client, app_secret, verify_token, salt, inline_webhook=False):
+    def build(cls, data_dir, model, client, app_secret, verify_token, salt, inline_webhook=False, public_url="", clips=proof_demo.CLIPS):
         data_dir = Path(data_dir)
         data_dir.mkdir(parents=True, exist_ok=True)
         store = Store(data_dir / "store.sqlite")
@@ -73,9 +80,14 @@ class App:
         judge_network.add_case("simulated-earlier-victim", {"upi": [SEED_UPI]})
         judge_engine = Engine(judge_network, model=model)
         channel = WhatsAppChannel(engine, client, store) if client else None
-        return cls(engine, judge_engine, channel, store, app_secret, verify_token, inline_webhook)
+        app = cls(engine, judge_engine, channel, store, app_secret, verify_token, inline_webhook, clips)
+        engine.calls = Calls(model, on_end=app._call_ended, base_url=public_url)
+        judge_engine.calls = Calls(model, base_url=public_url)
+        return app
 
     def close(self):
+        self.engine.calls.close()
+        self.judge_engine.calls.close()
         self.pool.shutdown(wait=False)
         self.engine.network.close()
         self.judge_engine.network.close()
@@ -91,6 +103,19 @@ class App:
                 return False
             calls.append(now)
             return True
+
+    def _call_ended(self, call, receipt):
+        if call.owner and self.channel:
+            self.channel.notify(call.owner, receipt)
+
+    def find_call(self, token):
+        call, role = self.engine.calls.find(token)
+        return (call, role) if call else self.judge_engine.calls.find(token)
+
+    def demo_call(self):
+        """A simulated person, either the writer or a stand-in, chosen at random and revealed at the end."""
+        call = self.judge_engine.calls.create(proof_demo.memory(), person=proof_demo.person(clips_dir=self.clips))
+        return {"token": call.tokens["asker"]}
 
     def webhook(self, payload):
         if not self.channel:
@@ -133,7 +158,9 @@ class App:
                 "state": session.case.state, "expected": session.case.expected, "held": session.case.held,
                 "credited": session.case.credited, "ack_id": session.case.ack_id, "request_id": session.case.request_id,
             },
-            "link_offer": out.link_offer,
+            "other_reports": out.other_reports,
+            "also": out.also,
+            "call": out.call,
             "language": session.language,
         }
 
@@ -146,9 +173,12 @@ def _handler(app):
     class Handler(BaseHTTPRequestHandler):
         server_version = "RedThread"
         sys_version = ""
+        protocol_version = "HTTP/1.1"
+        timeout = 65
 
         def log_message(self, format, *args):
-            sys.stderr.write(f"{self.command} {urlparse(self.path).path} {args[1] if len(args) > 1 else ''}\n")
+            path = _TOKEN_IN_PATH.sub(r"\1*", urlparse(self.path).path)
+            sys.stderr.write(f"{self.command} {path} {args[1] if len(args) > 1 else ''}\n")
 
         def _reply(self, status, body=b"", content_type="application/json"):
             self.send_response(status)
@@ -179,6 +209,8 @@ def _handler(app):
                     self._reply(200, challenge.encode("utf-8"), "text/plain")
             elif parts.path == "/api/world":
                 self._json(200, app.world())
+            elif parts.path.startswith("/api/proof/"):
+                self._proof_get(parts)
             else:
                 self._reply(404)
 
@@ -192,8 +224,99 @@ def _handler(app):
                 self._webhook(body)
             elif path == "/api/message":
                 self._judge(body)
+            elif path == "/api/proof/demo":
+                self._proof_demo()
+            elif path.startswith("/api/proof/"):
+                self._proof_post(path, body)
             else:
                 self._reply(404)
+
+        def _proof_demo(self):
+            if not app.allowed(self.client_address[0]):
+                self._json(429, {"error": "Too many calls. Wait a minute and try again."})
+                return
+            try:
+                self._json(200, app.demo_call())
+            except NotAllowed as error:
+                self._json(503, {"error": str(error)})
+
+        def _proof_get(self, parts):
+            match = _PROOF_PATH.match(parts.path)
+            call, role = app.find_call(match.group(1)) if match else (None, None)
+            if not call:
+                self._reply(404)
+            elif match.group(2) == "state":
+                self._json(200, call.state(role))
+            elif match.group(2) == "events":
+                self._proof_events(call, role, dict(parse_qsl(parts.query)))
+            elif match.group(2) == "clip" and match.group(3) and role == "asker" and call.person:
+                self._proof_clip(call, match.group(3))
+            else:
+                self._reply(404)
+
+        def _proof_events(self, call, role, query):
+            try:
+                after = max(0, int(query.get("after", 0)))
+                wait = min(MAX_EVENT_WAIT_SECONDS, max(0.0, float(query.get("wait", 0))))
+            except ValueError:
+                self._reply(400)
+                return
+            rows, seen = call.events(role, after, wait)
+            self._json(200, {"events": rows, "next": seen})
+
+        def _proof_clip(self, call, question):
+            path = call.person.clip_path(int(question))
+            if path.exists():
+                self._reply(200, path.read_bytes(), "audio/wav")
+            else:
+                self._reply(404)
+
+        def _proof_post(self, path, body):
+            match = _PROOF_PATH.match(path)
+            call, role = app.find_call(match.group(1)) if match else (None, None)
+            if not call:
+                self._reply(404)
+                return
+            action = match.group(2)
+            if action == "audio":
+                self._reply(204 if call.audio(role, body) else 409)
+                return
+            try:
+                if action == "signal" and len(body) > MAX_SIGNAL_BYTES:
+                    self._reply(413)
+                    return
+                data = json.loads(body or b"{}")
+                if action == "consent":
+                    call.consent(role)
+                elif action == "signal":
+                    call.signal(role, data)
+                elif action == "ask":
+                    call.ask(role, int(data["question"]))
+                elif action == "play":
+                    self._proof_play(call, data)
+                elif action == "finish":
+                    call.finish()
+                else:
+                    self._reply(404)
+                    return
+                self._json(200, {"ok": True})
+            except NotAllowed as error:
+                self._json(403, {"error": str(error)})
+            except (ValueError, KeyError, TypeError):
+                self._json(400, {"error": "That request could not be read."})
+            except Exception:
+                traceback.print_exc()
+                self._json(500, {"error": "Something went wrong. Try again."})
+
+        def _proof_play(self, call, data):
+            if data.get("line") == "money":
+                call.play_line(proof_demo.MONEY_LINE)
+            elif data.get("line") == "job" and call.person and call.person.kind == "stand_in":
+                call.play_line(proof_demo.JOB_LINE)
+            elif "question" in data:
+                call.play_guest(int(data["question"]))
+            else:
+                raise ValueError("Nothing to play.")
 
         def _webhook(self, body):
             if not verify_signature(app.app_secret, body, self.headers.get("X-Hub-Signature-256")):
@@ -229,11 +352,16 @@ def from_environment(environ=os.environ):
     data_dir.mkdir(parents=True, exist_ok=True)
     key = load_api_key(environ)
     budget = float(environ.get("REDTHREAD_BUDGET", "30"))
-    model = MetaModel(key, Ledger(budget, data_dir / "ledger.json"), cache_dir=data_dir / "cache") if key else None
+    # No disk cache here. Replies can quote the other person's chat, and "delete my data" could not reach them.
+    model = MetaModel(key, Ledger(budget, data_dir / "ledger.json")) if key else None
     token, phone = environ.get("WHATSAPP_TOKEN"), environ.get("WHATSAPP_PHONE_ID")
     client = Client(token, phone) if token and phone else None
     salt = environ.get("REDTHREAD_SALT", "").encode("utf-8") or None
-    return App.build(data_dir, model, client, environ.get("WHATSAPP_APP_SECRET", ""), environ.get("WHATSAPP_VERIFY_TOKEN", ""), salt)
+    clips = environ.get("REDTHREAD_CLIPS") or proof_demo.CLIPS
+    return App.build(
+        data_dir, model, client, environ.get("WHATSAPP_APP_SECRET", ""), environ.get("WHATSAPP_VERIFY_TOKEN", ""), salt,
+        public_url=environ.get("REDTHREAD_PUBLIC_URL", ""), clips=clips,
+    )
 
 
 def main():

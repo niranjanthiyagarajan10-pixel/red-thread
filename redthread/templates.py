@@ -126,7 +126,9 @@ _BUTTONS = {
     "paid": {"en": "I already paid", "hi": "मैं पैसे दे चुका", "ta": "பணம் கொடுத்தேன்"},
     "script": {"en": "Read the script", "hi": "क्या कहना है", "ta": "என்ன சொல்வது"},
     "called": {"en": "I have called", "hi": "कॉल कर लिया", "ta": "அழைத்துவிட்டேன்"},
+    "call": {"en": "Test on a call", "hi": "कॉल पर जांचें", "ta": "அழைப்பில் சோதி"},
 }
+_MIN_TURNS_FOR_CALL = 6
 
 
 def _button(key, language):
@@ -198,8 +200,12 @@ def _shorten(quote):
 
 
 def script_report(verdict, findings, chat, language="en"):
+    """When a chat is not clear either way, the next step is to test the story on a call. A known script gets reported."""
+    can_call = [_button("call", language)] if len(chat.turns) >= _MIN_TURNS_FOR_CALL else []
     if verdict.level == "nothing_found":
-        return _three("nothing_found", language, [_button("paid", language)])
+        return _three("nothing_found", language, [*can_call, _button("paid", language)])
     headline, next_step = _TEXT[verdict.level][language]
     proof = [f'{_place(chat, found.turn, language)}: "{_shorten(found.quote)}"' for found in _pick_proof(findings)]
-    return Answer(headline, proof, next_step, [_button("quotes", language), _button("report", language), _button("paid", language)])
+    if verdict.level == "known_script" or not can_call:
+        return Answer(headline, proof, next_step, [_button("quotes", language), _button("report", language), _button("paid", language)])
+    return Answer(headline, proof, next_step, [*can_call, _button("quotes", language), _button("paid", language)])

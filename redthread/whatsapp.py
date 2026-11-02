@@ -104,6 +104,7 @@ def payloads_for(to, outgoing):
     sent = [first]
     if outgoing.sheet and not outgoing.sheet_draft:
         sent += [text_payload(to, line) for line in as_messages(outgoing.sheet)]
+    sent += [text_payload(to, line) for line in outgoing.also]
     return sent
 
 

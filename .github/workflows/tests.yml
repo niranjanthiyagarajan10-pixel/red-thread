@@ -43,4 +43,6 @@ jobs:
           for attempt in 1 2 3 4 5 6 7 8 9 10; do curl -fs http://127.0.0.1:8080/healthz && break; sleep 1; done
           curl -fs -X POST http://127.0.0.1:8080/api/message -H 'Content-Type: application/json' -d '{"session":"ci","text":"I already paid Rs 38,000"}' | tee reply.json
           grep -q "careful people" reply.json
+          curl -fs -X POST http://127.0.0.1:8080/api/proof/demo -H 'Content-Type: application/json' -d '{}' | tee call.json
+          grep -q '"token"' call.json
           docker exec rt ffmpeg -version | head -1

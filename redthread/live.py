@@ -42,8 +42,8 @@ class Run:
             print(f"[buttons: {', '.join(out.answer.buttons)}]")
         if out.sheet:
             print(f"[sheet with {len(out.sheet.fields)} fields, {'ready' if out.sheet.ready else 'not ready'}]")
-        if out.link_offer:
-            print("[offer: talk to the other person, only if you both agree]")
+        if out.other_reports:
+            print("[another report shares this account]")
         return out
 
 

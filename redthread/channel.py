@@ -19,6 +19,7 @@ _NOT_READABLE = Answer(
     "For a chat: open it, tap More, then Export chat, then Without media, and share it here.",
 )
 _READING = "Reading it now. This takes a few seconds."
+_PREPARING_CALL = "Getting your call ready. This takes about half a minute."
 
 
 def read_export(data, filename):
@@ -46,6 +47,7 @@ class WhatsAppChannel:
         self.client = client
         self.store = store
         self._locks = defaultdict(threading.Lock)
+        self._senders = {}
 
     def _user(self, sender):
         """Phone numbers are never stored. Cases are filed under a salted hash."""
@@ -56,9 +58,21 @@ class WhatsAppChannel:
             if not self.store.mark_seen(message.id):
                 return
             user = self._user(message.sender)
+            self._senders[user] = message.sender
             with self._locks[user]:
                 self._answer(user, message)
         except Exception:
+            traceback.print_exc()
+
+    def notify(self, user, receipt):
+        """Sends a call's receipt. The number is kept in memory only, so after a restart the receipt stays on the call page."""
+        sender = self._senders.get(user)
+        if not sender:
+            return
+        try:
+            with self._locks[user]:
+                self._send(sender, self.engine.finish_call(user, receipt))
+        except WhatsAppError:
             traceback.print_exc()
 
     def _send(self, sender, outgoing):
@@ -78,6 +92,8 @@ class WhatsAppChannel:
             else:
                 if incoming.chat_export:
                     self._quietly_send_text(message.sender, _READING)
+                if incoming.button == "call":
+                    self._quietly_send_text(message.sender, _PREPARING_CALL)
                 outgoing = self.engine.handle(user, incoming)
         welcome = templates.welcome(session.language)
         try:

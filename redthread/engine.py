@@ -10,7 +10,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 
-from redthread import senses, templates
+from redthread import proof, senses, templates
 from redthread.amounts import format_rupees, parse_amounts
 from redthread.case import Case, apply_message, classify_message, next_step
 from redthread.conversation import Conversation, Turn, parse_whatsapp_export
@@ -30,6 +30,7 @@ _ON_TOPIC = re.compile(
 )
 _DELETE = re.compile(r"^\s*(delete my data|delete my case|मेरा डेटा हटाओ|என் தரவை நீக்கு)\W*$", re.I)
 _CHAT_KEPT_FOR = timedelta(hours=1)
+_SEND_THE_CHAT = "Open the chat, tap More, then Export chat, then Without media, and share it here."
 _NEEDS_A_CASE = {"held", "eligible", "request", "credit"}
 _STORY_LIMIT = 1500
 _QUESTIONS = {
@@ -62,8 +63,10 @@ class Incoming:
 class Outgoing:
     answer: Answer
     sheet: object = None
-    link_offer: bool = False
+    other_reports: bool = False
     sheet_draft: bool = False
+    also: list = field(default_factory=list)
+    call: dict = None
 
 
 @dataclass
@@ -101,6 +104,7 @@ class Engine:
         self.model = model
         self.store = store
         self.sessions = {}
+        self.calls = None
 
     def session(self, user):
         if user not in self.sessions:
@@ -211,12 +215,12 @@ class Engine:
             return self._loss(session, said, screenshot)
         return self._check_message(session, said, off_topic=bool(found) and found[0] == "off_topic")
 
-    def _finish(self, session, answer, sheet=None, link_offer=False):
+    def _finish(self, session, answer, sheet=None, other_reports=False):
         """Nothing leaves without passing the format check. If something slips, the safe welcome goes instead."""
         answer.proof = answer.proof[:3]
         if check_answer(answer):
             answer = templates.welcome(session.language)
-        return Outgoing(answer, sheet, link_offer)
+        return Outgoing(answer, sheet, other_reports)
 
     def _say(self, session, answer, sheet=None):
         """For English wording. Spark translates it when it can, and numbers are checked, otherwise English goes."""
@@ -309,8 +313,8 @@ class Engine:
         if result.questions and session.language != "en" and self.model:
             answer.proof = senses.translate(self.model, answer.proof, session.language) or answer.proof
         if matches:
-            answer.proof = answer.proof + ["Someone else reported this same account. If you both agree, you can talk."]
-        return self._finish(session, answer, link_offer=bool(matches))
+            answer.proof = answer.proof + ["Someone else reported this same account."]
+        return self._finish(session, answer, other_reports=bool(matches))
 
     def _write_story(self, session, english=None):
         """True facts from code, then the person's own account. Nothing is padded or invented."""
@@ -435,8 +439,31 @@ class Engine:
         if button == "called":
             return self._say(session, Answer("Well done. That was the most important step.", [], "Forward the SMS with your acknowledgement number here."))
         if button == "script":
-            return self._say(session, Answer("Send us the whole chat.", [], "Open the chat, tap More, then Export chat, then Without media, and share it here."))
+            return self._say(session, Answer("Send us the whole chat.", [], _SEND_THE_CHAT))
+        if button == "call":
+            return self._start_call(session)
         return self._finish(session, templates.welcome(session.language))
+
+    def _start_call(self, session):
+        """Reads the chat once, up front. The links go out untranslated, in messages of their own, so the guest's can be forwarded."""
+        if not self.calls or not session.chat or not session.other or len(session.chat.turns) < 2:
+            return self._say(session, Answer("Send us the whole chat first.", [], _SEND_THE_CHAT))
+        memory = proof.drop_guessable(self.model, proof.build_memory(self.model, session.chat, session.other))
+        call = self.calls.create(memory, owner=session.user)
+        out = self._say(session, Answer(
+            "Your call is ready.", ["Both of you will be told an AI is on the call before it starts."],
+            "Open your link first. Then forward the second link to them.",
+        ))
+        out.also = [
+            f"Your side: {self.calls.link(call.tokens['asker'])}",
+            f"Can we talk on a quick call? Open this link: {self.calls.link(call.tokens['guest'])}",
+        ]
+        out.call = dict(call.tokens)
+        return out
+
+    def finish_call(self, user, receipt):
+        """The receipt goes back into the same chat, in the person's language."""
+        return self._say(self.session(user), proof.receipt_answer(receipt))
 
     def _quotes(self, session):
         lines = [f'"{found.quote[:200]}"' for found in session.findings[:3]]

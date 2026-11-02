@@ -75,7 +75,7 @@ class SeeingTests(Base):
         engine.handle("a", Incoming(images=((b"same", "image/png"),), now=NOW))
         model.answers["see"] = {"kind": "payment", "visible_text": "Paid Rs 900", "payment_state": "success"}
         out = engine.handle("b", Incoming(images=((b"same", "image/png"),), now=NOW))
-        self.assertTrue(out.link_offer)
+        self.assertTrue(out.other_reports)
 
 
 class TriageTests(Base):

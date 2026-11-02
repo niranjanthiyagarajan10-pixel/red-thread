@@ -132,7 +132,7 @@ class RecoveryTests(unittest.TestCase):
     def test_second_victim_is_offered_a_link_only_with_consent(self):
         self.engine.handle("a", Incoming(voice_text="I paid Rs 500", screenshot_text="Paid Rs 500 to scam@ybl", now=NOW))
         out = self.engine.handle("b", Incoming(voice_text="I paid Rs 900", screenshot_text="Paid Rs 900 to scam@ybl", now=NOW))
-        self.assertTrue(out.link_offer)
+        self.assertTrue(out.other_reports)
         self.assertFalse(self.engine.network.linked("a", "b"))
 
 

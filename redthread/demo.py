@@ -27,8 +27,8 @@ def show(title, out):
     if out.sheet:
         ready = "ready" if out.sheet.ready else "needs fixing"
         print(f"[sheet with {len(out.sheet.fields)} fields, {ready}]")
-    if out.link_offer:
-        print("[offer: talk to the other person, only if you both agree]")
+    if out.other_reports:
+        print("[another report shares this account]")
 
 
 def main():
