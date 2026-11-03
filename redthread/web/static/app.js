@@ -17,6 +17,20 @@ export function reveal(root = document) {
   items.forEach((item) => watcher.observe(item));
 }
 
+// Builds DOM from text only. Anything from a chat or a model goes in as text, never as HTML.
+export function el(tag, props = {}, ...kids) {
+  const node = document.createElement(tag);
+  for (const [key, value] of Object.entries(props)) {
+    if (value === undefined || value === null || value === false) continue;
+    if (key === "class") node.className = value;
+    else if (key === "text") node.textContent = value;
+    else if (key.startsWith("on")) node.addEventListener(key.slice(2), value);
+    else node.setAttribute(key, value === true ? "" : value);
+  }
+  for (const kid of kids.flat(Infinity)) if (kid) node.append(kid);
+  return node;
+}
+
 export async function api(path, body) {
   const options = body === undefined ? {} : {
     method: "POST",

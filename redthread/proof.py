@@ -125,6 +125,7 @@ class Memory:
     keywords: list = field(default_factory=list)
     brief: dict = field(default_factory=dict)
     fallback: bool = False
+    guard: dict = None
 
 
 @dataclass
@@ -153,6 +154,8 @@ class Receipt:
     differs: list = field(default_factory=list)
     joined: bool = True
     not_asked: int = 0
+    phrase_heard: bool = None
+    alarms: list = field(default_factory=list)
 
 
 def _words(text):
@@ -232,9 +235,11 @@ def _score(model, questions, spoken):
     return {row["id"]: row["label"] for row in data["scores"] if row.get("label") in LABELS}
 
 
-def drop_guessable(model, memory):
-    """Spark tries to bluff its own questions with no chat. Any it gets right is too easy, so it goes, down to the minimum."""
+def drop_guessable(model, memory, bluffer=None):
+    """A second model plays a scammer who never saw the chat and tries to bluff every question. Spark scores its guesses,
+    and any it gets right is too easy, so it goes, down to the minimum. The person is shown what was guessed."""
     memory.questions, spare = memory.questions, memory.questions[:WANTED_QUESTIONS]
+    bluffer = bluffer or model
     if not model or memory.fallback:
         memory.questions = spare
         return memory
@@ -242,14 +247,19 @@ def drop_guessable(model, memory):
     brief = "\n".join(f"{key}: {value}" for key, value in memory.brief.items())
     messages = [{"role": "user", "content": _BLUFF_PROMPT.format(brief=brief, questions=asked)}]
     try:
-        reply = model.chat(messages, schema=BLUFF_SCHEMA, effort="low", max_output=3000, timeout=30, attempts=1)
-        spoken = {row["id"]: row["spoken"] for row in json.loads(reply.text)["answers"]}
+        reply = bluffer.chat(messages, schema=BLUFF_SCHEMA, effort="low", max_output=3000, timeout=45, attempts=1)
+        spoken = {row["id"]: str(row["spoken"]) for row in json.loads(reply.text)["answers"]}
         labels = _score(model, memory.questions, spoken)
     except _FAILED:
         memory.questions = spare
         return memory
     hard = [item for item in memory.questions if labels.get(item.id) != "consistent"]
     easy = [item for item in memory.questions if labels.get(item.id) == "consistent"]
+    memory.guard = {
+        "by": getattr(bluffer, "model", ""),
+        "tried": sum(1 for item in memory.questions if item.id in spoken),
+        "guessed": [{"question": item.text, "spoken": _short(spoken[item.id])} for item in easy],
+    }
     memory.questions = (hard + easy[:max(0, MIN_QUESTIONS - len(hard))])[:WANTED_QUESTIONS]
     return memory
 
@@ -329,10 +339,19 @@ def receipt_answer(receipt):
     fits = [item for item in receipt.results if item.label == "consistent"]
     differs = [item for item in receipt.results if item.label == "contradicts"]
     unclear = [item for item in receipt.results if item.label not in ("consistent", "contradicts")]
+    live = []
+    if receipt.phrase_heard is True:
+        live = ["They said the phrase you gave them, live, so the voice was not a recording."]
+    elif receipt.phrase_heard is False:
+        live = ["They never said the phrase you gave them, so the voice could have been a recording."]
+    if "money_ask" in receipt.alarms:
+        live.append("They asked for money on this call.")
+    elif receipt.alarms:
+        live.append("They asked for a code, an app or a transfer on this call.")
     if not receipt.results and not receipt.differs:
-        return Answer("The call ended before any questions were asked.", [], next_step)
+        return Answer("The call ended before any questions were asked.", live, next_step)
     asked = len(receipt.results)
     headline = f"Of {asked} {'question' if asked == 1 else 'questions'}, {len(fits)} fit what they wrote, {len(differs)} differed, and {len(unclear)} had no clear answer."
     proof = [f'They wrote: "{_short(item.question.quote)}" On the call: "{_short(item.said)}"' for item in differs]
     proof += [f'They wrote: "{_short(item.quote)}" On the call: "{_short(item.said)}"' for item in receipt.differs]
-    return Answer(headline, proof[:3], next_step)
+    return Answer(headline, live + proof[:3], next_step)

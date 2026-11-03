@@ -5,7 +5,7 @@ from unittest import mock
 
 from redthread import proof, proof_demo
 from redthread.conversation import Conversation, Turn
-from redthread.model import Reply
+from redthread.model import ModelError, Reply
 from redthread.proof_call import CONSENT_TEXT, MAX_AUDIO_CHUNK, MAX_LINE_CHECKS, Calls, NotAllowed
 from tests.test_proof import CHAT, GOOD, Scripted
 
@@ -333,6 +333,87 @@ class FinishTests(Base):
         call = calls.create(self.memory)
         call.finish()
         self.assertEqual(call.phase, "ended")
+
+
+class PhraseTests(Base):
+    def test_the_phrase_is_shown_only_once_the_call_is_live(self):
+        call = self.calls().create(self.memory)
+        self.assertNotIn("phrase", call.state("guest"))
+        call.consent("asker")
+        call.consent("guest")
+        phrase = call.state("guest")["phrase"]
+        self.assertEqual(len(phrase.split()), 3)
+        self.assertEqual(call.state("asker")["phrase"], phrase)
+        self.assertFalse(call.state("asker")["phrase_heard"])
+
+    def test_the_guest_saying_it_is_noticed_and_reported(self):
+        call = self.live()
+        self.speeches["guest"].on_turn(f"Okay, um, {call.phrase}.")
+        self.assertEqual(len(self.seen(call, kind="phrase_ok")), 1)
+        self.assertTrue(call.state("asker")["phrase_heard"])
+        self.speeches["guest"].on_turn(call.phrase)
+        self.assertEqual(len(self.seen(call, kind="phrase_ok")), 1)
+        call.finish()
+        self.assertTrue(self.ended[0][1].phrase_heard)
+
+    def test_the_asker_saying_it_does_not_count(self):
+        call = self.live()
+        self.speeches["asker"].on_turn(f"Can you say {call.phrase}?")
+        self.assertEqual(self.seen(call, kind="phrase_ok"), [])
+
+    def test_a_call_where_it_was_never_said_is_reported(self):
+        call = self.live()
+        call.finish()
+        self.assertFalse(self.ended[0][1].phrase_heard)
+        self.assertIn("never said the phrase", " ".join(self.seen(call, kind="receipt")[0]["answer"]["proof"]))
+
+    def test_a_money_ask_stays_on_the_receipt(self):
+        call = self.live()
+        self.speeches["guest"].on_turn("send me 5000 rupees today")
+        call.finish()
+        self.assertEqual(self.ended[0][1].alarms, ["money_ask"])
+        self.assertIn("asked for money", " ".join(self.seen(call, kind="receipt")[0]["answer"]["proof"]))
+
+    def test_a_simulated_person_says_it_through_the_same_path(self):
+        calls = Calls(None, speech_factory=None, pool=Inline(), on_end=None)
+        call = calls.create(proof_demo.memory(), person=proof_demo.person("stand_in"))
+        call.consent("asker")
+        captions = self.seen(call, kind="caption")
+        self.assertIn(call.phrase, captions[0]["text"].lower())
+        self.assertTrue(call.phrase_heard)
+
+    def test_guarding_a_live_call_drops_what_was_guessed_and_says_so(self):
+        call = self.live()
+        call.ask("asker", 2)
+        labels = {"scores": [{"id": 1, "label": "consistent"}, {"id": 2, "label": "consistent"}] + [{"id": item, "label": "no_answer"} for item in range(3, 6)]}
+        bluffer = Scripted(bluff={"answers": [{"id": item, "spoken": "a guess"} for item in range(1, 6)]})
+        call.guard(Scripted(scores=labels), bluffer)
+        ids = [item["id"] for item in call.state("asker")["questions"]]
+        self.assertNotIn(1, ids)
+        self.assertIn(2, ids, "a question already asked stays")
+        event = self.seen(call, kind="guarded")[0]
+        self.assertEqual(len(event["guard"]["guessed"]), 2)
+        self.assertEqual([item["id"] for item in event["questions"]], ids)
+
+    def test_a_failed_guard_changes_nothing(self):
+        call = self.live()
+        call.guard(Scripted(scores=ModelError("down")), Scripted(bluff=ModelError("down")))
+        self.assertEqual(len(call.state("asker")["questions"]), 5)
+        self.assertEqual(self.seen(call, kind="guarded"), [])
+        self.assertEqual(len(self.seen(call, kind="unguarded")), 1)
+        self.assertFalse(call.state("asker")["guarding"])
+
+    def test_only_the_asker_of_a_real_call_gets_the_guest_link(self):
+        call = self.calls().create(self.memory)
+        self.assertEqual(call.state("asker")["guest"], call.tokens["guest"])
+        self.assertNotIn(call.tokens["guest"], json.dumps(call.state("guest")))
+        self.assertNotIn(call.tokens["asker"], json.dumps(call.state("guest")))
+
+    def test_the_guard_reaches_the_asker_only(self):
+        self.memory.guard = {"by": "muse-wonder-1.0", "tried": 5, "guessed": [{"question": "What is your sister called?", "spoken": "Kavya"}]}
+        call = self.live()
+        self.assertEqual(call.state("asker")["guard"]["tried"], 5)
+        self.assertNotIn("guard", call.state("guest"))
 
 
 class WaitTests(Base):

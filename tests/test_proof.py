@@ -185,6 +185,23 @@ class GuessTests(unittest.TestCase):
         memory = proof.drop_guessable(Scripted(bluff=ModelError("down"), scores=ModelError("down")), self.memory())
         self.assertEqual(len(memory.questions), 5)
 
+    def test_a_second_model_bluffs_and_spark_scores(self):
+        labels = {"scores": [{"id": 1, "label": "consistent"}] + [{"id": item, "label": "contradicts"} for item in range(2, 6)]}
+        spark = Scripted(scores=labels)
+        wonder = Scripted(bluff={"answers": [{"id": 1, "spoken": "Her name is Kavya, obviously"}] + [{"id": item, "spoken": "No idea"} for item in range(2, 6)]})
+        wonder.model = "muse-wonder-1.0"
+        memory = proof.drop_guessable(spark, self.memory(), bluffer=wonder)
+        self.assertEqual([schema["title"] for _, schema, _ in wonder.seen], ["bluff"])
+        self.assertEqual([schema["title"] for _, schema, _ in spark.seen], ["scores"])
+        self.assertEqual(memory.guard["by"], "muse-wonder-1.0")
+        self.assertEqual(memory.guard["tried"], 5)
+        self.assertEqual(memory.guard["guessed"], [{"question": "What is your sister called?", "spoken": "Her name is Kavya, obviously"}])
+
+    def test_a_failed_bluff_leaves_no_guard_to_show(self):
+        memory = proof.drop_guessable(Scripted(scores={"scores": []}), self.memory(), bluffer=Scripted(bluff=ModelError("down")))
+        self.assertIsNone(memory.guard)
+        self.assertEqual(len(memory.questions), 5)
+
     def test_the_bluff_never_sees_the_chat(self):
         model = Scripted(bluff=self.bluff([1, 2, 3, 4, 5]), scores={"scores": []})
         proof.drop_guessable(model, self.memory())
@@ -347,6 +364,17 @@ class ReceiptTests(unittest.TestCase):
         answer = proof.receipt_answer(self.receipt([], joined=False))
         self.assertIn("did not join", answer.headline)
         self.assertIn("proves nothing", " ".join([*answer.proof, answer.next_step]))
+
+    def test_the_live_phrase_is_reported_either_way(self):
+        for heard, words in ((True, "not a recording"), (False, "could have been a recording")):
+            receipt = self.receipt(["consistent"])
+            receipt.phrase_heard = heard
+            answer = proof.receipt_answer(receipt)
+            self.assertIn(words, answer.proof[0])
+            self.assertEqual(check_answer(answer), [])
+
+    def test_a_receipt_without_a_phrase_says_nothing_about_one(self):
+        self.assertNotIn("phrase", " ".join(proof.receipt_answer(self.receipt(["consistent"])).proof))
 
     def test_long_quotes_still_fit_in_one_whatsapp_message(self):
         receipt = self.receipt(["contradicts"] * 3)

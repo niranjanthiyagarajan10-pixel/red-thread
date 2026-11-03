@@ -15,6 +15,7 @@ from redthread.quotes import find_quote
 OTHER = "Rohan"
 PEOPLE = ("writer", "stand_in")
 MONEY_LINE = "By the way, my cousin runs this trading app. You should invest with me today, send me 5000 rupees and I will set it up."
+WRITER_JOB_LINE = "Still the product job at the software firm in Bengaluru. Too many meetings, honestly."
 JOB_LINE = "My job is at a bank in Dubai, I have been working there for six years and I have never lived in Bengaluru."
 _TURNS = [
     ("Rohan", "Hey! Your profile made me laugh, the bit about arguing with autorickshaw meters."),

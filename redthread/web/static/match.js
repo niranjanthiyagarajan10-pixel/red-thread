@@ -1,6 +1,6 @@
 // A match: their profile, your chat, where the story breaks, and checks with sources.
 // Everything from a chat or a model goes in as text, never as HTML.
-import { api } from "/static/app.js";
+import { api, el, remember } from "/static/app.js";
 
 const $ = (id) => document.getElementById(id);
 const STAGES = { hook: "Hook", line: "Line", sinker: "Sinker" };
@@ -11,19 +11,6 @@ let token = null;
 let state = null;
 const busy = {};
 const errors = {};
-
-function el(tag, props = {}, ...kids) {
-  const node = document.createElement(tag);
-  for (const [key, value] of Object.entries(props)) {
-    if (value === undefined || value === null || value === false) continue;
-    if (key === "class") node.className = value;
-    else if (key === "text") node.textContent = value;
-    else if (key.startsWith("on")) node.addEventListener(key.slice(2), value);
-    else node.setAttribute(key, value === true ? "" : value);
-  }
-  for (const kid of kids.flat(Infinity)) if (kid) node.append(kid);
-  return node;
-}
 
 function waiting(text) {
   return el("p", { class: "wait", role: "status" }, el("i"), el("span", { text }));
@@ -203,6 +190,33 @@ function renderChecks() {
     chips, ask, busy.check ? waiting("Searching the web. This can take up to a minute.") : null, results, failure("check"));
 }
 
+function openCall() {
+  return run("call", async () => {
+    const reply = await api(`/api/thread/${token}/call`, {});
+    state.call = reply.token;
+    remember("call-from", { call: reply.token, match: token });
+    location.href = `/proof/${reply.token}`;
+  });
+}
+
+function renderCall() {
+  const title = el("h2", { text: "Test on a call" });
+  if (!state.reading) {
+    return fill("m-call", false, title, el("p", { class: "sub", text: "Add your chat first. The questions come from it." }));
+  }
+  if (busy.call) return fill("m-call", false, title, waiting("Writing questions only the writer could answer, then trying to guess them blind"));
+  const name = state.chat ? state.chat.other : state.name;
+  const sub = state.example
+    ? `A voice call with a simulated ${name}. It might be the person who wrote the chat, or a stand-in who never saw it. You find out at the end.`
+    : `A short voice call. You ask small things from your chat that only the person who wrote it would know. ${name} agrees first, and sees nothing you see.`;
+  const open = state.call ? el("a", { class: "link", href: `/proof/${state.call}`, text: "Open the call",
+    onclick: () => remember("call-from", { call: state.call, match: token }) }) : null;
+  return fill("m-call", Boolean(state.call), title, el("p", { class: "sub", text: sub }),
+    el("div", { class: "adders" },
+      el("button", { class: "btn btn-red", text: state.call ? "Start a new call" : "Set up a Proof Call", onclick: openCall }), open),
+    failure("call"));
+}
+
 function render() {
   if (!state) return;
   $("who").textContent = state.name;
@@ -211,6 +225,7 @@ function render() {
   renderChat();
   renderBreaks();
   renderChecks();
+  renderCall();
 }
 
 function show(view) {

@@ -47,6 +47,34 @@ class ThreadRouteTests(Running):
         status, reply = self.request(f"/api/thread/{token}/check", {"kind": "weather", "value": "x"})
         self.assertEqual(status, 400)
 
+    def test_the_example_match_starts_a_simulated_call_at_once(self):
+        token = self.create(example=True)
+        self.request(f"/api/thread/{token}/chat", {"text": thread_demo.CHAT})
+        status, reply = self.request(f"/api/thread/{token}/call", {})
+        self.assertEqual(status, 200)
+        status, state = self.request(f"/api/proof/{reply['token']}/state")
+        self.assertTrue(state["simulated"])
+        self.assertEqual(state["other"], "Rohan")
+        self.assertEqual(self.request(f"/api/thread/{token}")[1]["call"], reply["token"])
+
+    def test_a_real_match_call_is_built_from_its_own_chat(self):
+        token = self.create()
+        self.assertEqual(self.request(f"/api/thread/{token}/call", {})[0], 400, "no chat yet")
+        self.request(f"/api/thread/{token}/chat", {"text": thread_demo.CHAT})
+        status, reply = self.request(f"/api/thread/{token}/call", {})
+        self.assertEqual(status, 200)
+        state = self.request(f"/api/proof/{reply['token']}/state")[1]
+        self.assertFalse(state["simulated"])
+        self.assertGreaterEqual(len(state["questions"]), 3)
+
+    def test_the_call_page_is_served(self):
+        import urllib.request
+        token = self.create(example=True)
+        self.request(f"/api/thread/{token}/chat", {"text": thread_demo.CHAT})
+        call = self.request(f"/api/thread/{token}/call", {})[1]["token"]
+        with urllib.request.urlopen(f"{self.base}/proof/{call}", timeout=10) as response:
+            self.assertIn(b"Red Thread", response.read())
+
     def test_forget_removes_the_thread(self):
         token = self.create()
         self.assertEqual(self.request(f"/api/thread/{token}/forget", {})[0], 200)

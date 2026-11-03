@@ -16,7 +16,7 @@ from urllib.parse import urlparse
 from redthread import breaks as breaks_logic
 from redthread import investigate
 from redthread import profile as profile_logic
-from redthread import stages
+from redthread import proof, stages
 from redthread.conversation import Conversation, Turn, parse_whatsapp_export
 from redthread.model import BudgetExceeded
 from redthread.shield import scrub
@@ -56,6 +56,7 @@ class Thread:
     items: list = field(default_factory=list)
     checks: list = field(default_factory=list)
     reads: int = 0
+    call: str = ""
 
 
 def parse_chat(text, name):
@@ -209,6 +210,18 @@ class Threads:
         thread.checks.append(view)
         return view
 
+    def call_memory(self, token):
+        """Questions only the writer of this chat could answer. Spark writes them, and the second model tries to bluff them blind."""
+        thread = self._get(token)
+        if not thread.chat:
+            raise NotAllowed("Add your chat first, so the questions come from it.")
+        self._read(thread)
+        memory = proof.build_memory(self.model, thread.chat, thread.other)
+        return proof.drop_guessable(self.model, memory, self.searcher)
+
+    def set_call(self, token, asker_token):
+        self._get(token).call = asker_token
+
     def forget(self, token):
         with self._lock:
             self._threads.pop(token, None)
@@ -222,7 +235,7 @@ class Threads:
     def state(self, thread):
         chat, report, profile = thread.chat, thread.report, thread.profile
         state = {"token": thread.token, "name": thread.name, "example": thread.example, "profile": None, "chat": None,
-                 "reading": None, "breaks": [], "items": [], "checks": list(thread.checks)}
+                 "reading": None, "breaks": [], "items": [], "checks": list(thread.checks), "call": thread.call or None}
         if profile:
             state["profile"] = {
                 "lines": profile.lines, "fallback": profile.fallback,

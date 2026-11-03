@@ -90,6 +90,8 @@ class App:
         self.pool = ThreadPoolExecutor(8)
         self.knots = None
         self.threads = None
+        self.model = None
+        self.wonder = None
         self.rate_limit = 60
         self._calls = defaultdict(deque)
         self._lock = threading.Lock()
@@ -108,8 +110,10 @@ class App:
         app = cls(engine, judge_engine, channel, store, app_secret, verify_token, inline_webhook, clips)
         engine.calls = Calls(model, on_end=app._call_ended, base_url=public_url)
         judge_engine.calls = Calls(model, base_url=public_url)
+        app.model = model
+        app.wonder = model.using(WONDER) if model else None
         app.knots = Knots(model)
-        app.threads = Threads(model, model.using(WONDER) if model else None, engine.network, judge_network)
+        app.threads = Threads(model, app.wonder, engine.network, judge_network)
         return app
 
     def close(self):
@@ -144,7 +148,21 @@ class App:
     def demo_call(self):
         """A simulated person, either the writer or a stand-in, chosen at random and revealed at the end."""
         call = self.judge_engine.calls.create(proof_demo.memory(), person=proof_demo.person(clips_dir=self.clips))
+        if self.model:
+            # The call starts at once. Wonder tries to bluff the questions in the background, and guessed ones leave the list.
+            call.guarding = True
+            self.pool.submit(call.guard, self.model, self.wonder)
         return {"token": call.tokens["asker"]}
+
+    def thread_call(self, token):
+        thread = self.threads.find(token)
+        if thread.example:
+            reply = self.demo_call()
+        else:
+            call = self.engine.calls.create(self.threads.call_memory(token))
+            reply = {"token": call.tokens["asker"]}
+        self.threads.set_call(token, reply["token"])
+        return reply
 
     def webhook(self, payload):
         if not self.channel:
@@ -272,6 +290,8 @@ def _handler(app):
                 self._file(WEB / _PAGES[parts.path])
             elif re.match(r"^/card/[A-Za-z0-9_-]{10,64}$", parts.path):
                 self._file(WEB / "card.html")
+            elif re.match(r"^/proof/[A-Za-z0-9_-]{10,64}$", parts.path):
+                self._file(WEB / "proof.html")
             elif _STATIC.match(parts.path):
                 self._file(WEB / "static" / _STATIC.match(parts.path).group(1))
             else:
@@ -354,7 +374,7 @@ def _handler(app):
                 self._reply(404)
                 return
             action = match.group(2) if match else "create"
-            if action in ("create", "profile", "chat", "check") and not app.allowed(self.client_address[0]):
+            if action in ("create", "profile", "chat", "check", "call") and not app.allowed(self.client_address[0]):
                 self._json(429, {"error": "Too many tries. Wait a minute and try again."})
                 return
             try:
@@ -377,6 +397,9 @@ def _handler(app):
                     check = app.threads.check(token, str(data.get("kind", "")), str(data.get("value", "")))
                     self._json(200, {"check": check})
                     return
+                elif action == "call":
+                    self._json(200, app.thread_call(token))
+                    return
                 elif action == "forget":
                     app.threads.forget(token)
                     self._json(200, {"ok": True})
@@ -385,7 +408,7 @@ def _handler(app):
                     self._reply(404)
                     return
                 self._json(200, {"state": app.threads.state(thread)})
-            except ThreadRefused as error:
+            except (ThreadRefused, NotAllowed) as error:
                 self._json(400, {"error": str(error)})
             except (ValueError, AttributeError, TypeError):
                 self._json(400, {"error": "That request could not be read."})
@@ -496,8 +519,8 @@ def _handler(app):
         def _proof_play(self, call, data):
             if data.get("line") == "money":
                 call.play_line(proof_demo.MONEY_LINE)
-            elif data.get("line") == "job" and call.person and call.person.kind == "stand_in":
-                call.play_line(proof_demo.JOB_LINE)
+            elif data.get("line") == "job" and call.person:
+                call.play_line(proof_demo.JOB_LINE if call.person.kind == "stand_in" else proof_demo.WRITER_JOB_LINE)
             elif "question" in data:
                 call.play_guest(int(data["question"]))
             else:

@@ -164,6 +164,39 @@ if __name__ == "__main__":
     unittest.main()
 
 
+MEMORY = {
+    "name": "Rohan", "job": "product", "city": "Bengaluru", "names": ["Pepper", "Bijli"], "claims": [],
+    "questions": [
+        {"question": "Who taught you to make filter coffee?", "quote": "My paati taught me filter coffee in Mylapore", "answer": "paati"},
+        {"question": "What makes your dog run and hide?", "quote": "He hides under the bed every time the pressure cooker whistles", "answer": "pressure cooker"},
+        {"question": "What do you call that scooter of yours?", "quote": "My old scooter Bijli", "answer": "Bijli"},
+        {"question": "Who said this?", "quote": "Ha, someone had to say it.", "answer": "me"},
+    ],
+}
+
+
+class CallTests(Base):
+    def test_a_call_needs_the_chat_first(self):
+        thread = self.threads.create("Rohan")
+        with self.assertRaises(NotAllowed):
+            self.threads.call_memory(thread.token)
+
+    def test_questions_come_from_the_match_and_a_second_model_bluffs_them(self):
+        self.model.answers.update(memory=MEMORY, bluff={"answers": [{"id": 1, "spoken": "My paati"}]},
+                                  scores={"scores": [{"id": 1, "label": "consistent"}]})
+        thread = self.full(example=False)
+        memory = self.threads.call_memory(thread.token)
+        self.assertEqual(memory.other, "Rohan")
+        self.assertNotIn("Who said this?", [item.text for item in memory.questions])
+        self.assertIn("bluff", self.model.seen)
+        self.assertEqual(memory.guard["tried"], 1)
+
+    def test_the_call_shows_in_the_thread(self):
+        thread = self.full()
+        self.threads.set_call(thread.token, "asker-token-123")
+        self.assertEqual(self.threads.state(thread)["call"], "asker-token-123")
+
+
 class ExampleLabelTests(Base):
     def test_an_example_report_says_it_is_part_of_the_example(self):
         thread = self.full()

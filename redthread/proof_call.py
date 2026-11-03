@@ -11,6 +11,7 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor
 
 from redthread import proof
+from redthread.knot import make_phrase, phrase_said
 from redthread.reply import render
 from redthread.senses import LANGUAGE_BIAS
 from redthread.shield import scrub
@@ -47,6 +48,9 @@ class ProofCall:
         self.owner = owner
         self.person = person
         self.tokens = {"asker": secrets.token_urlsafe(18), "guest": secrets.token_urlsafe(18)}
+        self.phrase = make_phrase(secrets.SystemRandom())
+        self.phrase_heard = False
+        self.guarding = False
         self.phase = "waiting"
         self.created = time.monotonic()
         self.consents = set()
@@ -85,9 +89,18 @@ class ProofCall:
 
     def state(self, role):
         state = {"role": role, "phase": self.phase, "consent_text": CONSENT_TEXT, "consented": role in self.consents, "simulated": bool(self.person)}
+        if self.phase != "waiting":
+            # Shown only once the call is live, so nothing recorded before it can hold the phrase.
+            state["phrase"] = self.phrase
         if role == "asker" and self.memory:
-            state["questions"] = [{"id": item.id, "text": item.text, "quote": item.quote} for item in self.memory.questions]
+            state["other"] = self.memory.other
+            state["questions"] = self._questions()
             state["other_joined"] = "guest" in self.consents
+            state["phrase_heard"] = self.phrase_heard
+            state["guard"] = self.memory.guard
+            state["guarding"] = self.guarding
+            if not self.person:
+                state["guest"] = self.tokens["guest"]
         return state
 
     def consent(self, role):
@@ -107,9 +120,33 @@ class ProofCall:
 
     def _begin(self):
         for role in ("asker", "guest"):
-            self._emit(role, type="live")
+            self._emit(role, type="live", phrase=self.phrase)
             if not self.person:
                 self._open_speech(role)
+        if self.person:
+            self.pool.submit(self.play_line, f"Okay, here goes. {self.phrase.capitalize()}.")
+
+    def _questions(self):
+        return [{"id": item.id, "text": item.text, "quote": item.quote} for item in self.memory.questions]
+
+    def guard(self, model, bluffer):
+        """For a call that starts at once: the second model bluffs in the background, and guessed questions leave the list.
+        One already asked stays, so a card never loses its question."""
+        trial = proof.Memory(self.memory.other, list(self.memory.questions), brief=self.memory.brief)
+        self.guarding = True
+        try:
+            proof.drop_guessable(model, trial, bluffer)
+        except Exception:
+            traceback.print_exc()
+        self.guarding = False
+        if not trial.guard:
+            self._emit("asker", type="unguarded")
+            return
+        with self._changed:
+            kept = {item.id for item in trial.questions} | set(self.asked)
+            self.memory.questions = [item for item in self.memory.questions if item.id in kept]
+            self.memory.guard = trial.guard
+        self._emit("asker", type="guarded", guard=trial.guard, questions=self._questions())
 
     def _open_speech(self, role):
         """A simulated call opens a stream only when there is audio, since a silent stream is closed by the server."""
@@ -164,6 +201,10 @@ class ProofCall:
         now = self.clock()
         self._guest_turns += 1
         self._last_guest_turn = now
+        if not self.phrase_heard and phrase_said(self.phrase, text):
+            self.phrase_heard = True
+            self._emit("asker", type="phrase_ok")
+            return
         alarm = proof.live_alarm(text)
         if alarm:
             if alarm.kind not in self.alarms:
@@ -347,7 +388,7 @@ class ProofCall:
         for question_id in self.asked:
             found = self.results.get(question_id)
             results.append(found["result"] if found else proof.Result(by_id[question_id], "no_answer", ""))
-        return proof.Receipt(results, list(self.differs), joined, len(self.memory.questions) - len(results))
+        return proof.Receipt(results, list(self.differs), joined, len(self.memory.questions) - len(results), self.phrase_heard if joined else None, sorted(self.alarms))
 
     def forget(self):
         self.memory = None
