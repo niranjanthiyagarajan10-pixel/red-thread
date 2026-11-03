@@ -49,11 +49,12 @@ _CARD_PATH = re.compile(r"^/api/card/([A-Za-z0-9_-]{10,64})$")
 _THREAD_PATH = re.compile(r"^/api/thread/([A-Za-z0-9_-]{10,64})(?:/([a-z]+))?$")
 _TOKEN_IN_PATH = re.compile(r"(/(?:proof|knot|card|thread)/)[A-Za-z0-9_-]{10,64}")
 WEB = Path(__file__).resolve().parent / "web"
-_PAGES = {"/": "index.html", "/knot": "knot.html", "/match": "match.html"}
-_STATIC = re.compile(r"^/static/([a-z0-9_-]+\.(css|js|svg|png|jpg|webp|ico|woff2))$")
+_PAGES = {"/": "index.html", "/knot": "knot.html", "/match": "match.html", "/lab": "lab.html"}
+_STATIC = re.compile(r"^/static/([a-z0-9_-]+\.(css|js|json|svg|png|jpg|webp|ico|woff2))$")
 _TYPES = {
     "html": "text/html; charset=utf-8", "css": "text/css; charset=utf-8", "js": "text/javascript; charset=utf-8",
     "svg": "image/svg+xml", "png": "image/png", "jpg": "image/jpeg", "webp": "image/webp", "ico": "image/x-icon", "woff2": "font/woff2",
+    "json": "application/json",
 }
 _PAGE_HEADERS = {
     "Content-Security-Policy": "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; "

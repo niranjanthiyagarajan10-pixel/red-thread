@@ -224,14 +224,15 @@ def build_memory(model, chat, other):
     return Memory(other, questions, claims, _keywords(chat, other, names), brief, fallback)
 
 
-def _score(model, questions, spoken):
-    """Asks about several answers at once. Anything missing or odd stays unscored, because code never guesses a label."""
+def _score(model, questions, spoken, timeout=12, attempts=1):
+    """Asks about several answers at once. Anything missing or odd stays unscored, because code never guesses a label.
+    Live answers get a short wait. Scoring a whole set of bluffs before a call can take longer."""
     items = "\n\n".join(
         f"id {item.id}\nquestion: {item.text}\nmessages:\n{item.context}\nspoken answer: {spoken[item.id]}"
         for item in questions if item.id in spoken
     )
     messages = [{"role": "developer", "content": _SCORE_PROMPT}, {"role": "user", "content": items}]
-    data = json.loads(model.chat(messages, schema=SCORES_SCHEMA, effort="low", max_output=2000, timeout=12, attempts=1).text)
+    data = json.loads(model.chat(messages, schema=SCORES_SCHEMA, effort="low", max_output=2000, timeout=timeout, attempts=attempts).text)
     return {row["id"]: row["label"] for row in data["scores"] if row.get("label") in LABELS}
 
 
@@ -247,9 +248,9 @@ def drop_guessable(model, memory, bluffer=None):
     brief = "\n".join(f"{key}: {value}" for key, value in memory.brief.items())
     messages = [{"role": "user", "content": _BLUFF_PROMPT.format(brief=brief, questions=asked)}]
     try:
-        reply = bluffer.chat(messages, schema=BLUFF_SCHEMA, effort="low", max_output=3000, timeout=45, attempts=1)
+        reply = bluffer.chat(messages, schema=BLUFF_SCHEMA, effort="low", max_output=3000, timeout=45, attempts=2)
         spoken = {row["id"]: str(row["spoken"]) for row in json.loads(reply.text)["answers"]}
-        labels = _score(model, memory.questions, spoken)
+        labels = _score(model, memory.questions, spoken, timeout=45, attempts=2)
     except _FAILED:
         memory.questions = spare
         return memory

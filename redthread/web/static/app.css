@@ -323,3 +323,18 @@ button.mic { border: 0; background: none; padding: 0; cursor: pointer; font: 400
 .bill-figure figcaption { margin-top: 10px; font-size: 14px; color: var(--ink-2); }
 .table-notes li { margin-bottom: 12px; }
 .table-notes li.payee, .table-notes li.total_off { color: var(--thread); font-weight: 600; }
+/* The test lab. */
+.lab .lab-part { margin-top: 72px; padding-top: 36px; border-top: 4px solid var(--thread); }
+.lab .sub { margin: 10px 0 0; color: var(--ink-2); font-size: 17px; line-height: 1.47; max-width: 38em; }
+.lab .stats { margin-top: 36px; }
+.cases { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 36px 28px; margin-top: 44px; }
+.case img { width: 100%; height: auto; background: var(--paper-2); }
+.case h3 { margin: 14px 0 0; font: 600 21px/1.25 var(--display); letter-spacing: -0.015em; }
+.case .sub { font-size: 15px; }
+.case .small { margin: 6px 0 0; }
+.case.missed { outline: 2px solid var(--thread); outline-offset: 6px; }
+.lab .guessed { max-width: 40em; }
+#lab-note { margin-top: 56px; }
+@media (max-width: 640px) {
+  .cases { grid-template-columns: 1fr; }
+}

@@ -94,6 +94,16 @@ class ThreadRouteTests(Running):
             with urllib.request.urlopen(self.base + example[key], timeout=10) as response:
                 self.assertEqual(response.headers["Content-Type"], "image/jpeg")
 
+    def test_the_lab_page_and_its_results_are_served(self):
+        import json
+        import urllib.request
+        with urllib.request.urlopen(self.base + "/lab", timeout=10) as response:
+            self.assertIn(b"attack our own checks", response.read())
+        with urllib.request.urlopen(self.base + "/static/lab.json", timeout=10) as response:
+            self.assertEqual(response.headers["Content-Type"], "application/json")
+            results = json.loads(response.read())
+        self.assertIn("summary", results["bills"])
+
     def test_forget_removes_the_thread(self):
         token = self.create()
         self.assertEqual(self.request(f"/api/thread/{token}/forget", {})[0], 200)

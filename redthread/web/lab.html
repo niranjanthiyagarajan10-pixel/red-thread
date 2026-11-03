@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Test lab. Red Thread</title>
+<link rel="stylesheet" href="/static/app.css">
+<link rel="icon" href="/static/knot.svg" type="image/svg+xml">
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="mark" href="/" aria-label="Red Thread home">
+      <svg viewBox="0 0 34 14" aria-hidden="true"><path d="M1 10H11C15.5 10 17 2.5 13 2.5S10.5 10 17 10H33" fill="none" stroke="#d71e28" stroke-width="2.2" stroke-linecap="round"/></svg>
+      Red Thread
+    </a>
+    <a class="btn btn-red" href="/match">Check a match</a>
+  </div>
+</header>
+
+<main class="match lab">
+  <p class="eyebrow">Test lab</p>
+  <h1 class="headline">We attack our own checks.</h1>
+  <p class="lede">Meta models make the fakes. The same checks you use have to catch them. <strong>Code knows what was planted, so code keeps the score.</strong></p>
+
+  <section class="lab-part" aria-labelledby="h-bills">
+    <h2 class="title" id="h-bills">Fake bills</h2>
+    <p class="sub">Muse Image printed bills from numbers we chose. Some hide a racket, some are fair. Spark reads each photo, SAM 3.1 finds the QR, and code compares it with the menu.</p>
+    <div class="stats" id="bill-stats"></div>
+    <div class="cases" id="bill-cases"></div>
+  </section>
+
+  <section class="lab-part" aria-labelledby="h-bluff">
+    <h2 class="title" id="h-bluff">A scammer who never saw the chat</h2>
+    <p class="sub">Muse Wonder plays a scam worker who knows only a name, a job and a city, and hears each Proof Call question. Every question it gets right is dropped before a call.</p>
+    <div class="stats" id="bluff-stats"></div>
+    <div id="bluff-cases"></div>
+  </section>
+
+  <p class="small" id="lab-note"></p>
+</main>
+<script type="module" src="/static/lab.js"></script>
+</body>
+</html>

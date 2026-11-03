@@ -1,0 +1,280 @@
+{
+ "bills": {
+  "summary": {
+   "bills": 10,
+   "planted": 7,
+   "caught": 7,
+   "fair": 3,
+   "false_alarms": 0,
+   "read_exact": 10,
+   "qr_found": 10
+  },
+  "rows": [
+   {
+    "id": "ten-times",
+    "title": "Ten times the menu",
+    "plant": "Three lines at ten times the menu price, a service charge, and a QR to a personal UPI ID.",
+    "planted": true,
+    "expected": [
+     "overcharge",
+     "payee",
+     "service"
+    ],
+    "found": [
+     "overcharge",
+     "payee",
+     "service"
+    ],
+    "caught": true,
+    "false_alarm": false,
+    "read_exact": true,
+    "qr_found": true,
+    "headline": "This bill charges ₹38,070 more than the menu.",
+    "findings": [
+     "Virgin Mojito: ₹4,800 for 2. The menu says ₹240 each, so ₹480. That's 10 times the menu price.",
+     "Hookah: ₹9,500 for 1. The menu says ₹950 each, so ₹950. That's 10 times the menu price.",
+     "Whisky 30 ml: ₹28,000 for 4. The menu says ₹700 each, so ₹2,800. That's 10 times the menu price.",
+     "Service charge, ₹4,262. In India a service charge is voluntary and can't be added by default. You can ask for it to be removed, and complain to the National Consumer Helpline on 1915.",
+     "The bill's QR pays rohit.k@okaxis, which doesn't carry the name Moonlit Terrace Cafe. Before you scan, check the name your UPI app shows. You can pay the business at the counter or by card."
+    ]
+   },
+   {
+    "id": "one-double",
+    "title": "One line doubled",
+    "plant": "Two cold coffees billed at twice the menu price.",
+    "planted": true,
+    "expected": [
+     "overcharge"
+    ],
+    "found": [
+     "overcharge"
+    ],
+    "caught": true,
+    "false_alarm": false,
+    "read_exact": true,
+    "qr_found": true,
+    "headline": "This bill charges ₹360 more than the menu.",
+    "findings": [
+     "Cold Coffee: ₹720 for 2. The menu says ₹180 each, so ₹360. That's 2 times the menu price."
+    ]
+   },
+   {
+    "id": "subtle",
+    "title": "Fifteen percent over",
+    "plant": "The veg platter billed at 520 against 450 on the menu.",
+    "planted": true,
+    "expected": [
+     "overcharge"
+    ],
+    "found": [
+     "overcharge"
+    ],
+    "caught": true,
+    "false_alarm": false,
+    "read_exact": true,
+    "qr_found": true,
+    "headline": "This bill charges ₹70 more than the menu.",
+    "findings": [
+     "Veg Platter: ₹520 for 1. The menu says ₹450 each, so ₹450. That's 16% over the menu price."
+    ]
+   },
+   {
+    "id": "padded-total",
+    "title": "A padded total",
+    "plant": "Every line is fair, but the printed total is 1,000 more than they add up to.",
+    "planted": true,
+    "expected": [
+     "total_off"
+    ],
+    "found": [
+     "total_off"
+    ],
+    "caught": true,
+    "false_alarm": false,
+    "read_exact": true,
+    "qr_found": true,
+    "headline": "This bill's total doesn't add up.",
+    "findings": [
+     "The total, ₹1,714, is ₹1,000 more than its own lines add up to."
+    ]
+   },
+   {
+    "id": "ghost-item",
+    "title": "A ghost item",
+    "plant": "A 1,500 table reservation that is not on the menu.",
+    "planted": true,
+    "expected": [
+     "not_on_menu"
+    ],
+    "found": [
+     "not_on_menu"
+    ],
+    "caught": true,
+    "false_alarm": false,
+    "read_exact": true,
+    "qr_found": true,
+    "headline": "Some of this bill isn't on the menu you photographed.",
+    "findings": [
+     "Table reservation, ₹1,500, isn't on the menu you photographed. Ask what it is."
+    ]
+   },
+   {
+    "id": "personal-upi",
+    "title": "A personal UPI ID",
+    "plant": "Fair prices, but the QR pays a person instead of the cafe.",
+    "planted": true,
+    "expected": [
+     "payee"
+    ],
+    "found": [
+     "payee"
+    ],
+    "caught": true,
+    "false_alarm": false,
+    "read_exact": true,
+    "qr_found": true,
+    "headline": "This bill matches the menu.",
+    "findings": [
+     "The bill's QR pays anita.r@oksbi, which doesn't carry the name Moonlit Terrace Cafe. Before you scan, check the name your UPI app shows. You can pay the business at the counter or by card."
+    ]
+   },
+   {
+    "id": "service-added",
+    "title": "Service charge added",
+    "plant": "Fair prices with a service charge added by default.",
+    "planted": true,
+    "expected": [
+     "service"
+    ],
+    "found": [
+     "service"
+    ],
+    "caught": true,
+    "false_alarm": false,
+    "read_exact": true,
+    "qr_found": true,
+    "headline": "This bill matches the menu.",
+    "findings": [
+     "Service charge, ₹112. In India a service charge is voluntary and can't be added by default. You can ask for it to be removed, and complain to the National Consumer Helpline on 1915."
+    ]
+   },
+   {
+    "id": "fair-a",
+    "title": "Fair bill",
+    "plant": "Nothing planted.",
+    "planted": false,
+    "expected": [
+     "nothing"
+    ],
+    "found": [
+     "nothing"
+    ],
+    "caught": true,
+    "false_alarm": false,
+    "read_exact": true,
+    "qr_found": true,
+    "headline": "This bill matches the menu.",
+    "findings": []
+   },
+   {
+    "id": "fair-b",
+    "title": "Fair bill",
+    "plant": "Nothing planted.",
+    "planted": false,
+    "expected": [
+     "nothing"
+    ],
+    "found": [
+     "nothing"
+    ],
+    "caught": true,
+    "false_alarm": false,
+    "read_exact": true,
+    "qr_found": true,
+    "headline": "This bill matches the menu.",
+    "findings": []
+   },
+   {
+    "id": "fair-c",
+    "title": "Fair bill",
+    "plant": "Nothing planted.",
+    "planted": false,
+    "expected": [
+     "nothing"
+    ],
+    "found": [
+     "nothing"
+    ],
+    "caught": true,
+    "false_alarm": false,
+    "read_exact": true,
+    "qr_found": true,
+    "headline": "This bill matches the menu.",
+    "findings": []
+   }
+  ]
+ },
+ "bluff": {
+  "summary": {
+   "chats": 4,
+   "tried": 21,
+   "guessed": 6,
+   "kept": 15,
+   "unguarded": 0
+  },
+  "rows": [
+   {
+    "chat": "Rohan",
+    "tried": 5,
+    "guessed": [
+     {
+      "question": "Who taught you to make coffee when you were growing up?",
+      "spoken": "My grandmother taught me to make filter coffee in our kitchen when I was growing up."
+     },
+     {
+      "question": "What noise is it that makes your dog hide?",
+      "spoken": "The pressure cooker whistle is the noise that makes my dog hide under the bed."
+     },
+     {
+      "question": "You mentioned your scooter, what do you call her?",
+      "spoken": "I call my scooter Bijli because she zips through Bengaluru traffic so fast."
+     }
+    ],
+    "fallback": false
+   },
+   {
+    "chat": "Priya",
+    "tried": 6,
+    "guessed": [],
+    "fallback": false
+   },
+   {
+    "chat": "Kabir",
+    "tried": 5,
+    "guessed": [
+     {
+      "question": "Where does your cat like to drink from?",
+      "spoken": "My cat insists on drinking only from the leaking tap in my bathroom sink."
+     },
+     {
+      "question": "What do you play at celebrations?",
+      "spoken": "I play the harmonium at family celebrations."
+     }
+    ],
+    "fallback": false
+   },
+   {
+    "chat": "Meera",
+    "tried": 5,
+    "guessed": [
+     {
+      "question": "What happened on your first day at rowing?",
+      "spoken": "On my first day at rowing, I tipped the boat sideways near Thevara and came home completely soaked."
+     }
+    ],
+    "fallback": false
+   }
+  ]
+ },
+ "ran": "03 Nov 2026"
+}

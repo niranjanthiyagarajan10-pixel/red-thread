@@ -20,6 +20,8 @@ PRICE_PER_MILLION = {SPARK: (1.25, 4.25), WONDER: (4.0, 20.0)}
 WEB_SEARCH_EACH = 0.0025
 SAM = "sam-3.1"
 SAM_EACH = 0.0025
+IMAGE = "muse-image-1.0"
+IMAGE_EACH = 0.01
 WORST_CASE_SEARCHES = 10
 WORST_CASE_SEARCH_TOKENS = 40000
 HOME = Path(os.environ.get("REDTHREAD_HOME", Path.home() / "muse-spike"))
@@ -228,6 +230,22 @@ class MetaModel:
             raise
         self.ledger.settle(ticket, found.cost)
         return found
+
+    def image(self, prompt, size="1024x1024", output_format="jpeg", timeout=180):
+        """Muse Image. The test lab uses it to make fakes that attack our own checks."""
+        body = {"model": IMAGE, "prompt": prompt, "n": 1, "size": size, "output_format": output_format}
+        ticket = self.ledger.reserve(IMAGE_EACH)
+        try:
+            data = json.loads(self._post("/images/generations", json.dumps(body).encode("utf-8"), "application/json", timeout, 2))
+            raw = base64.b64decode(data["data"][0]["b64_json"])
+        except (ValueError, KeyError, IndexError, TypeError) as error:
+            self.ledger.settle(ticket, 0.0)
+            raise ModelError("Image reply had an unexpected shape.") from error
+        except Exception:
+            self.ledger.settle(ticket, 0.0)
+            raise
+        self.ledger.settle(ticket, IMAGE_EACH)
+        return raw
 
     def locate(self, raw, mime, phrase, timeout=60):
         """SAM 3.1 finds a thing in a photo, such as a payment QR, and answers with boxes as text for code to parse."""
