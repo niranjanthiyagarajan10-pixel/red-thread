@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scam check. Red Thread</title>
+<link rel="stylesheet" href="/static/app.css">
+<link rel="icon" href="/static/knot.svg" type="image/svg+xml">
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="mark" href="/" aria-label="Red Thread home">
+      <svg viewBox="0 0 34 14" aria-hidden="true"><path d="M1 10H11C15.5 10 17 2.5 13 2.5S10.5 10 17 10H33" fill="none" stroke="#d71e28" stroke-width="2.2" stroke-linecap="round"/></svg>
+      Red Thread
+    </a>
+    <a class="btn btn-red" href="tel:1930">Call 1930</a>
+  </div>
+</header>
+
+<main class="match shield">
+  <p class="eyebrow">Scam check</p>
+  <h1 class="headline">Something feels off?</h1>
+  <p class="lede">Paste a message, share a chat, or tell us what's happening right now. <strong>If money already left, we walk you through getting it back.</strong></p>
+
+  <div class="chips" id="starters" aria-label="Ways to start"></div>
+
+  <section class="listen" id="listen" hidden aria-labelledby="h-listen"></section>
+
+  <ol class="convo" id="convo" aria-live="polite"></ol>
+
+  <form class="composer" id="composer" autocomplete="off">
+    <textarea id="text" rows="3" maxlength="4000" placeholder="Paste the message, or tell us what happened" aria-label="Your message"></textarea>
+    <div class="adders">
+      <button class="btn btn-red" type="submit" id="send">Send</button>
+      <span class="link file">Add a screenshot<input id="shot" type="file" accept="image/png,image/jpeg,image/webp" aria-label="Add a screenshot"></span>
+      <span class="link file">Share a chat export<input id="export" type="file" accept=".txt,text/plain" aria-label="Share a WhatsApp chat export"></span>
+      <button class="mic off" type="button" id="note"><i></i><span>Record a voice note</span></button>
+    </div>
+    <p class="error" id="note-error" role="alert"></p>
+  </form>
+
+  <section class="sim" id="sim" hidden aria-labelledby="h-sim"></section>
+
+  <section class="case-track" id="case" hidden aria-labelledby="h-case"></section>
+
+  <p class="small foot-note">Red Thread is a prototype. It is not the police, a bank or a government service. In danger, call 112. For cyber fraud in India, call 1930 or use cybercrime.gov.in. We never need your OTP, PIN, card or password.</p>
+</main>
+<script type="module" src="/static/shield.js"></script>
+</body>
+</html>

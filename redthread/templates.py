@@ -94,6 +94,11 @@ _TEXT = {
         "hi": ('कहें: "मेरे {amount} ऑनलाइन ठगी में चले गए।{reference} कृपया इसे होल्ड कराएं।"', " रेफरेंस {value} है।", "पैसे"),
         "ta": ('சொல்லுங்கள்: "ஆன்லைன் மோசடியில் {amount} இழந்தேன்.{reference} தயவுசெய்து இதை நிறுத்தி வையுங்கள்."', " ரெஃபரன்ஸ் {value}.", "பணம்"),
     },
+    "script_head": {
+        "en": ("When 1930 answers, say this.", "Call 1930 now. Then tap below."),
+        "hi": ("1930 पर बात हो तो यह कहें।", "अभी 1930 पर कॉल करें। फिर नीचे दबाएं।"),
+        "ta": ("1930 அழைப்பு எடுத்ததும் இதைச் சொல்லுங்கள்.", "இப்போதே 1930 அழையுங்கள். பிறகு கீழே அழுத்துங்கள்."),
+    },
     "loss_question": {
         "en": "Answer when you can, but call 1930 first. Time matters.",
         "hi": "जब हो सके जवाब दें, पर पहले 1930 पर कॉल करें। समय मायने रखता है।",
@@ -163,6 +168,15 @@ def relay_blocked(reason, language="en"):
 
 def during_call(kind, language="en"):
     return _three(f"call_{kind}", language)
+
+
+def call_script(amount, reference, language="en"):
+    """The words to say when 1930 answers. Code fills in the amount and reference the person gave."""
+    script, reference_part, no_amount = _TEXT["call_script"][language]
+    said = script.format(amount=format_rupees(amount) if amount is not None else no_amount,
+                         reference=reference_part.format(value=reference) if reference else "")
+    headline, next_step = _TEXT["script_head"][language]
+    return Answer(headline, [said], next_step, [_button("called", language)])
 
 
 def after_loss(reconciled, language="en"):

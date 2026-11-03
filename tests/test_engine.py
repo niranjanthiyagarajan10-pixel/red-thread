@@ -115,6 +115,26 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(session.facts["amount"], Decimal(250000))
         self.assertEqual(session.facts["reference"], "533827652689")
 
+    def test_after_a_loss_read_the_script_gives_the_words_for_1930(self):
+        self.engine.handle("u1", Incoming(voice_text="I already paid dhai lakh", screenshot_text="Paid Rs 2,50,000 to scam@ybl UTR 533827652689", now=NOW))
+        out = self.engine.handle("u1", Incoming(button="script", now=NOW))
+        text = render(out.answer)
+        self.assertIn('Say: "I lost Rs 2,50,000', text)
+        self.assertIn("533827652689", text)
+        self.assertNotIn("Export chat", text)
+
+    def test_the_script_uses_what_they_said_when_there_is_no_screenshot_yet(self):
+        self.engine.handle("u1", Incoming(text="I lost Rs 38,000 to a fake trading app. The UTR is 533827652689.", now=NOW))
+        text = render(self.engine.handle("u1", Incoming(button="script", now=NOW)).answer)
+        self.assertIn('Say: "I lost Rs 38,000', text)
+        self.assertIn("533827652689", text)
+        self.assertNotIn("amount", self.engine.session("u1").facts, "a stated amount is still not a confirmed one")
+
+    def test_the_script_without_a_known_amount_still_has_words(self):
+        self.engine.handle("u1", Incoming(text="I lost money to a scam", now=NOW))
+        self.engine.session("u1").case = self.engine.session("u1").case or __import__("redthread.case", fromlist=["Case"]).Case("u1")
+        self.assertIn('Say: "I lost money', render(self.engine.handle("u1", Incoming(button="script", now=NOW)).answer))
+
     def test_mismatch_asks_but_still_says_call_first(self):
         out = self.engine.handle("u1", Incoming(voice_text="I paid two lakh", screenshot_text="Paid Rs 2,50,000", now=NOW))
         self.assertIn("1930", out.answer.next_step)

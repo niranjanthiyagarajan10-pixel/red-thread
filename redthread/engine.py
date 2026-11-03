@@ -439,6 +439,14 @@ class Engine:
         if button == "called":
             return self._say(session, Answer("Well done. That was the most important step.", [], "Forward the SMS with your acknowledgement number here."))
         if button == "script":
+            if session.case:
+                # After a loss, the script is what to say when 1930 answers. The person says their own figures, so
+                # a stated amount can go in the script before a screenshot confirms it for the complaint.
+                stated = parse_amounts(session.spoken)
+                amount = session.facts.get("amount", stated[0].value if stated else None)
+                references = extract_identifiers(session.spoken)["reference"]
+                reference = session.facts.get("reference", references[0] if references else None)
+                return self._finish(session, templates.call_script(amount, reference, session.language))
             return self._say(session, Answer("Send us the whole chat.", [], _SEND_THE_CHAT))
         if button == "call":
             return self._start_call(session)

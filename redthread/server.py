@@ -28,6 +28,7 @@ from redthread.knot_session import Knots
 from redthread.knot_session import NotAllowed as KnotRefused
 from redthread.model import HOME, WONDER, Ledger, MetaModel, load_api_key
 from redthread.network import Network
+from redthread.listen import Listens
 from redthread.proof_call import Calls, NotAllowed
 from redthread.store import Store
 from redthread.thread import NotAllowed as ThreadRefused
@@ -46,10 +47,11 @@ MAX_EVENT_WAIT_SECONDS = 25
 _PROOF_PATH = re.compile(r"^/api/proof/([A-Za-z0-9_-]{10,64})/([a-z]+)(?:/(\d+))?$")
 _KNOT_PATH = re.compile(r"^/api/knot/([A-Za-z0-9_-]{10,64})/([a-z]+)$")
 _CARD_PATH = re.compile(r"^/api/card/([A-Za-z0-9_-]{10,64})$")
+_LISTEN_PATH = re.compile(r"^/api/listen/([A-Za-z0-9_-]{10,64})/([a-z]+)$")
 _THREAD_PATH = re.compile(r"^/api/thread/([A-Za-z0-9_-]{10,64})(?:/([a-z]+))?$")
-_TOKEN_IN_PATH = re.compile(r"(/(?:proof|knot|card|thread)/)[A-Za-z0-9_-]{10,64}")
+_TOKEN_IN_PATH = re.compile(r"(/(?:proof|knot|card|thread|listen)/)[A-Za-z0-9_-]{10,64}")
 WEB = Path(__file__).resolve().parent / "web"
-_PAGES = {"/": "index.html", "/knot": "knot.html", "/match": "match.html", "/lab": "lab.html"}
+_PAGES = {"/": "index.html", "/knot": "knot.html", "/match": "match.html", "/lab": "lab.html", "/shield": "shield.html"}
 _STATIC = re.compile(r"^/static/([a-z0-9_-]+\.(css|js|json|svg|png|jpg|webp|ico|woff2))$")
 _TYPES = {
     "html": "text/html; charset=utf-8", "css": "text/css; charset=utf-8", "js": "text/javascript; charset=utf-8",
@@ -91,6 +93,7 @@ class App:
         self.pool = ThreadPoolExecutor(8)
         self.knots = None
         self.threads = None
+        self.listens = None
         self.model = None
         self.wonder = None
         self.rate_limit = 60
@@ -114,12 +117,15 @@ class App:
         app.model = model
         app.wonder = model.using(WONDER) if model else None
         app.knots = Knots(model)
+        app.listens = Listens(model)
         app.threads = Threads(model, app.wonder, engine.network, judge_network)
         return app
 
     def close(self):
         if self.knots:
             self.knots.close()
+        if self.listens:
+            self.listens.close()
         self.engine.calls.close()
         self.judge_engine.calls.close()
         self.pool.shutdown(wait=False)
@@ -279,6 +285,8 @@ def _handler(app):
                 self._proof_get(parts)
             elif parts.path.startswith("/api/knot/"):
                 self._knot_get(parts)
+            elif _LISTEN_PATH.match(parts.path) and _LISTEN_PATH.match(parts.path).group(2) == "events":
+                self._listen_events(parts)
             elif _THREAD_PATH.match(parts.path) and not _THREAD_PATH.match(parts.path).group(2):
                 thread = app.threads.find(_THREAD_PATH.match(parts.path).group(1))
                 self._json(200, app.threads.state(thread)) if thread else self._reply(404)
@@ -444,6 +452,47 @@ def _handler(app):
                 self._thread_post(path, body)
             elif path.startswith("/api/knot/"):
                 self._knot_post(path, body)
+            elif path == "/api/listen" or path.startswith("/api/listen/"):
+                self._listen_post(path, body)
+            else:
+                self._reply(404)
+
+        def _listen_events(self, parts):
+            session = app.listens.find(_LISTEN_PATH.match(parts.path).group(1))
+            if not session:
+                self._reply(404)
+                return
+            query = dict(parse_qsl(parts.query))
+            try:
+                after = max(0, int(query.get("after", 0)))
+                wait = min(MAX_EVENT_WAIT_SECONDS, max(0.0, float(query.get("wait", 0))))
+            except ValueError:
+                self._reply(400)
+                return
+            rows, seen = session.events(after, wait)
+            self._json(200, {"events": rows, "next": seen})
+
+        def _listen_post(self, path, body):
+            if path == "/api/listen":
+                if not app.allowed(self.client_address[0]):
+                    self._json(429, {"error": "Too many tries. Wait a minute and try again."})
+                    return
+                try:
+                    self._json(200, {"token": app.listens.create().token})
+                except ValueError as error:
+                    self._json(503, {"error": str(error)})
+                return
+            match = _LISTEN_PATH.match(path)
+            session = app.listens.find(match.group(1)) if match else None
+            if not session:
+                self._reply(404)
+            elif match.group(2) == "audio":
+                self._reply(204 if session.audio(body) else 409)
+            elif match.group(2) == "start":
+                session.start()
+                self._json(200, {"ok": True})
+            elif match.group(2) == "stop":
+                self._json(200, {"said": session.stop()})
             else:
                 self._reply(404)
 
