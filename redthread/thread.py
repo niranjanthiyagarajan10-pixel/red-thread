@@ -10,11 +10,14 @@ import secrets
 import threading
 import time
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
+from redthread import bill as bill_logic
 from redthread import breaks as breaks_logic
 from redthread import investigate
+from redthread import plan as plan_logic
 from redthread import profile as profile_logic
 from redthread import proof, stages
 from redthread.conversation import Conversation, Turn, parse_whatsapp_export
@@ -24,7 +27,7 @@ from redthread.shield import scrub
 MAX_THREADS = 500
 THREAD_SECONDS = 24 * 60 * 60
 MAX_CHECKS = 6
-MAX_READS = 6
+MAX_READS = 12
 MAX_CHAT_CHARS = 200_000
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 MAX_NAME_CHARS = 40
@@ -57,6 +60,11 @@ class Thread:
     checks: list = field(default_factory=list)
     reads: int = 0
     call: str = ""
+    plan: object = None
+    menu: object = None
+    bill: object = None
+    table: object = None
+    qr: dict = None
 
 
 def parse_chat(text, name):
@@ -222,6 +230,39 @@ class Threads:
     def set_call(self, token, asker_token):
         self._get(token).call = asker_token
 
+    def add_plan(self, token):
+        thread = self._get(token)
+        if not thread.chat:
+            raise NotAllowed("Add your chat first, so we can read how the date was set up.")
+        self._read(thread)
+        thread.plan = plan_logic.read_plan(self.model, thread.chat, thread.other)
+        return thread
+
+    def add_menu(self, token, image):
+        thread = self._get(token)
+        raw, mime = decode_image(image)
+        self._read(thread)
+        thread.menu = bill_logic.read_menu(self.model, raw, mime)
+        self._compare(thread)
+        return thread
+
+    def add_bill(self, token, image):
+        """Spark reads the bill and SAM rings its QR at the same time, so the person waits for one, not two."""
+        thread = self._get(token)
+        raw, mime = decode_image(image)
+        self._read(thread)
+        with ThreadPoolExecutor(2) as pool:
+            reading = pool.submit(bill_logic.read_bill, self.model, raw, mime)
+            ringing = pool.submit(bill_logic.find_qr, self.model, raw, mime)
+            thread.bill, thread.qr = reading.result(), ringing.result()
+        self._compare(thread)
+        return thread
+
+    def _compare(self, thread):
+        if thread.bill:
+            network = self.example_network if thread.example else self.network
+            thread.table = bill_logic.compare(thread.menu, thread.bill, network=network, case_id=f"thread:{thread.token}")
+
     def forget(self, token):
         with self._lock:
             self._threads.pop(token, None)
@@ -258,4 +299,27 @@ class Threads:
         state["breaks"] = [{"topic": item.topic, "profile_quote": item.profile_quote, "chat_quote": item.chat_quote,
                             "when": _turn_day(chat, item.chat_turn)} for item in thread.breaks]
         state["items"] = [{"kind": item.kind, "value": item.value, "label": item.label} for item in thread.items]
+        state["plan"] = None
+        if thread.plan:
+            state["plan"] = {
+                "venue": thread.plan.venue, "headline": thread.plan.headline, "fallback": thread.plan.fallback,
+                "tripwires": [{"kind": item.kind, "label": item.label, "quote": item.quote, "when": item.when} for item in thread.plan.tripwires],
+                "advice": thread.plan.advice, "note": plan_logic.friend_note(thread.plan, thread.other or thread.name),
+            }
+        state["table"] = None
+        if thread.menu or thread.bill:
+            menu, read, check = thread.menu, thread.bill, thread.table
+            state["table"] = {
+                "menu": {"venue": menu.venue, "fallback": menu.fallback, "items": [{"name": item.name, "price": item.price} for item in menu.items]} if menu else None,
+                "bill": {
+                    "venue": read.venue, "fallback": read.fallback, "total": read.total, "payee": read.payee,
+                    "lines": [{"name": line.name, "quantity": line.quantity, "amount": line.amount, "menu_price": line.menu_price} for line in read.lines],
+                    "charges": [{"name": charge.name, "amount": charge.amount} for charge in read.charges],
+                } if read else None,
+                "check": {
+                    "level": check.level, "headline": check.headline, "extra": check.extra, "menu_total": check.menu_total,
+                    "findings": [{"kind": item.kind, "text": item.text, "name": item.name} for item in check.findings],
+                } if check else None,
+                "qr": thread.qr,
+            }
         return state

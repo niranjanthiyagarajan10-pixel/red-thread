@@ -217,6 +217,139 @@ function renderCall() {
     failure("call"));
 }
 
+const money = (amount) => `₹${Number(amount).toLocaleString("en-IN")}`;
+let billImage = null;
+
+function readPlan() {
+  return run("plan", async () => {
+    state = (await api(`/api/thread/${token}/plan`, {})).state;
+  });
+}
+
+async function share(text) {
+  try {
+    if (navigator.share) {
+      await navigator.share({ text });
+      return;
+    }
+    await navigator.clipboard.writeText(text);
+    errors.plan = "Copied. Paste it to a friend.";
+  } catch (error) {
+    errors.plan = "Select the note and copy it.";
+  }
+  render();
+}
+
+function renderDate() {
+  const title = el("h2", { text: "The date" });
+  if (!state.reading) return fill("m-date", false, title, el("p", { class: "sub", text: "Add your chat first. We read how the meeting was set up." }));
+  if (busy.plan) return fill("m-date", false, title, waiting("Reading how the date was set up"));
+  const plan = state.plan;
+  if (!plan || plan.fallback) {
+    return fill("m-date", false, title,
+      el("p", { class: "sub", text: plan ? plan.headline : "Before you go, see where and how they set up the meeting." }),
+      el("div", { class: "adders" }, el("button", { class: "btn btn-ink", text: "Read the date plan", onclick: readPlan })), failure("plan"));
+  }
+  const checked = new Set(state.checks.map((item) => `${item.kind}:${item.label}`));
+  const venue = plan.venue ? el("div", { class: "venue" },
+    el("p", {}, el("span", { class: "label", text: "Where " }), el("b", { text: plan.venue })),
+    checked.has(`place:${plan.venue}`) ? null : el("button", { class: "chip", text: `Check ${plan.venue}`, disabled: busy.check,
+      onclick: () => check("place", plan.venue) })) : null;
+  const wires = plan.tripwires.length ? el("ul", { class: "findings" }, plan.tripwires.map((item) => el("li", {},
+    el("div", {}, el("span", { class: "what", text: item.label }), item.when ? el("span", { class: "when", text: item.when }) : null),
+    el("blockquote", { class: "said", text: item.quote })))) : null;
+  const note = el("div", { class: "friend" },
+    el("p", { class: "label", text: "A note for a friend" }),
+    el("p", { class: "note-text", text: plan.note }),
+    el("button", { class: "btn btn-line btn-small", text: "Send to a friend", onclick: () => share(plan.note) }));
+  return fill("m-date", true, title,
+    el("p", { class: `verdict${plan.tripwires.length ? " warn" : ""}`, text: plan.headline }),
+    venue, wires,
+    el("ul", { class: "advice" }, plan.advice.map((line) => el("li", { text: line }))),
+    note, busy.check ? waiting("Searching the web. This can take up to a minute.") : null, failure("plan"));
+}
+
+function addPhoto(kind, image) {
+  return run(kind, async () => {
+    if (kind === "bill") billImage = image;
+    state = (await api(`/api/thread/${token}/${kind}`, { image })).state;
+  });
+}
+
+function photoAdder(kind, label) {
+  const files = el("input", { type: "file", accept: "image/png,image/jpeg,image/webp", "aria-label": label });
+  files.addEventListener("change", async () => {
+    if (files.files[0]) addPhoto(kind, await shrink(files.files[0]));
+  });
+  return el("span", { class: `btn ${kind === "bill" ? "btn-red" : "btn-line"} file` }, label, files);
+}
+
+async function exampleImage(kind) {
+  const example = await api("/api/example");
+  return shrink(await (await fetch(example[`${kind}_image`])).blob());
+}
+
+function ringed(qr) {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", `0 0 ${qr.w} ${qr.h}`);
+  svg.setAttribute("class", "bill-photo");
+  svg.setAttribute("role", "img");
+  svg.setAttribute("aria-label", "The bill, with its payment QR ringed");
+  const image = document.createElementNS(ns, "image");
+  image.setAttribute("href", billImage);
+  image.setAttribute("width", qr.w);
+  image.setAttribute("height", qr.h);
+  const pad = qr.w / 60;
+  const ring = document.createElementNS(ns, "rect");
+  ring.setAttribute("x", qr.x1 - pad);
+  ring.setAttribute("y", qr.y1 - pad);
+  ring.setAttribute("width", qr.x2 - qr.x1 + pad * 2);
+  ring.setAttribute("height", qr.y2 - qr.y1 + pad * 2);
+  ring.setAttribute("class", "ring");
+  ring.setAttribute("stroke-width", qr.w / 150);
+  svg.append(image, ring);
+  return el("figure", { class: "bill-figure" }, svg, el("figcaption", { text: "SAM 3.1 found the payment QR. Check whose name it pays before you scan." }));
+}
+
+function renderTable() {
+  const title = el("h2", { text: "At the table" });
+  const table = state.table || {};
+  const menu = table.menu;
+  const read = table.bill;
+  const result = table.check;
+  if (busy.menu || busy.bill) return fill("m-table", false, title, waiting(busy.bill ? "Reading the bill and finding its QR" : "Reading the menu"));
+  const parts = [el("p", { class: "sub", text: "A photo of the menu when you sit down, and of the bill at the end. We compare them line by line." })];
+  const adders = el("div", { class: "adders" });
+  if (!menu || menu.fallback) adders.append(state.example ? el("button", { class: "btn btn-line", text: "Use the example menu",
+    onclick: async () => addPhoto("menu", await exampleImage("menu")) }) : photoAdder("menu", "Photo of the menu"));
+  if (!read || read.fallback) adders.append(state.example ? el("button", { class: "btn btn-red", text: "Use the example bill",
+    onclick: async () => addPhoto("bill", await exampleImage("bill")) }) : photoAdder("bill", "Photo of the bill"));
+  if (menu && !menu.fallback) parts.push(el("p", { class: "small", text: `Menu read: ${menu.items.length} items${menu.venue ? ` from ${menu.venue}` : ""}.` }));
+  if (menu && menu.fallback) parts.push(el("p", { class: "small", text: "We couldn't read that menu. Try a flatter, closer photo." }));
+  if (adders.children.length) parts.push(adders);
+  if (result) {
+    const warn = result.level !== "fair" && result.level !== "no_menu";
+    parts.push(el("p", { class: `verdict${warn ? " warn" : ""}`, text: result.headline }));
+    if (result.level === "overcharged") {
+      parts.push(el("p", { class: "sub", text: `By the menu, the food and drinks come to ${money(result.menu_total)}.` }));
+    }
+    if (read && read.lines.length) {
+      const over = new Set(result.findings.filter((item) => item.kind === "overcharge").map((item) => item.name));
+      parts.push(el("table", { class: "lines" },
+        el("thead", {}, el("tr", {}, el("th", { text: "Item" }), el("th", { text: "Qty" }), el("th", { text: "Bill" }), el("th", { text: "Menu" }))),
+        el("tbody", {}, read.lines.map((line) => el("tr", { class: over.has(line.name) ? "over" : "" },
+          el("td", { text: line.name }), el("td", { text: String(line.quantity) }), el("td", { text: money(line.amount) }),
+          el("td", { text: line.menu_price ? money(line.menu_price * line.quantity) : "" }))))));
+    }
+    if (table.qr && billImage) parts.push(ringed(table.qr));
+    const notes = result.findings.filter((item) => item.kind !== "overcharge");
+    if (notes.length) parts.push(el("ul", { class: "advice table-notes" }, notes.map((item) => el("li", { class: item.kind, text: item.text }))));
+  }
+  parts.push(failure("menu"), failure("bill"));
+  return fill("m-table", Boolean(result && result.level !== "unread"), title, parts);
+}
+
 function render() {
   if (!state) return;
   $("who").textContent = state.name;
@@ -226,6 +359,8 @@ function render() {
   renderBreaks();
   renderChecks();
   renderCall();
+  renderDate();
+  renderTable();
 }
 
 function show(view) {

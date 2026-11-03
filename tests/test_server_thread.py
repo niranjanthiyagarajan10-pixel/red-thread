@@ -75,6 +75,25 @@ class ThreadRouteTests(Running):
         with urllib.request.urlopen(f"{self.base}/proof/{call}", timeout=10) as response:
             self.assertIn(b"Red Thread", response.read())
 
+    def test_the_date_and_the_table_answer_calmly_with_no_keys(self):
+        token = self.create()
+        self.request(f"/api/thread/{token}/chat", {"text": thread_demo.CHAT})
+        status, reply = self.request(f"/api/thread/{token}/plan", {})
+        self.assertEqual(status, 200)
+        self.assertTrue(reply["state"]["plan"]["fallback"])
+        image = "data:image/png;base64,iVBORw0KGgo="
+        status, reply = self.request(f"/api/thread/{token}/bill", {"image": image})
+        self.assertEqual(status, 200)
+        self.assertEqual(reply["state"]["table"]["check"]["level"], "unread")
+        self.assertEqual(self.request(f"/api/thread/{token}/menu", {"image": "not an image"})[0], 400)
+
+    def test_the_example_photos_are_served(self):
+        import urllib.request
+        example = self.request("/api/example")[1]
+        for key in ("menu_image", "bill_image"):
+            with urllib.request.urlopen(self.base + example[key], timeout=10) as response:
+                self.assertEqual(response.headers["Content-Type"], "image/jpeg")
+
     def test_forget_removes_the_thread(self):
         token = self.create()
         self.assertEqual(self.request(f"/api/thread/{token}/forget", {})[0], 200)

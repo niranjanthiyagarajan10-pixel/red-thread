@@ -197,6 +197,55 @@ class CallTests(Base):
         self.assertEqual(self.threads.state(thread)["call"], "asker-token-123")
 
 
+class DateTests(Base):
+    def setUp(self):
+        super().setUp()
+        from tests.test_bill import MENU, RACKET
+        from tests.test_plan import READ as PLAN
+
+        self.model.answers.update(plan=PLAN, menu=MENU, bill=RACKET)
+        self.model.locate = lambda raw, mime, phrase: "<|box;x1=325;y1=1209;x2=539;y2=1424;w=1600;h=1600|>"
+
+    def test_the_plan_needs_the_chat(self):
+        thread = self.threads.create("Rohan")
+        with self.assertRaises(NotAllowed):
+            self.threads.add_plan(thread.token)
+
+    def test_the_plan_shows_its_tripwires_and_a_note_for_a_friend(self):
+        thread = self.full()
+        state = self.threads.state(self.threads.add_plan(thread.token))
+        self.assertEqual(state["plan"]["venue"], "Moonlit Terrace Cafe")
+        self.assertEqual(state["plan"]["tripwires"][0]["label"], "They picked the place.")
+        self.assertIn("Moonlit Terrace Cafe", state["plan"]["note"])
+
+    def test_menu_then_bill_is_compared_and_the_qr_is_ringed(self):
+        thread = self.full()
+        self.threads.add_menu(thread.token, PNG)
+        state = self.threads.state(self.threads.add_bill(thread.token, PNG))
+        table = state["table"]
+        self.assertEqual(table["menu"]["items"][0], {"name": "Virgin Mojito", "price": 240})
+        self.assertEqual(table["check"]["level"], "overcharged")
+        self.assertEqual(table["check"]["headline"], "This bill charges ₹38,070 more than the menu.")
+        self.assertEqual(table["bill"]["lines"][0]["menu_price"], 240)
+        self.assertEqual(table["qr"]["x1"], 325)
+
+    def test_a_bill_alone_still_checks_its_own_sums(self):
+        thread = self.full()
+        state = self.threads.state(self.threads.add_bill(thread.token, PNG))
+        self.assertEqual(state["table"]["check"]["level"], "no_menu")
+
+    def test_a_menu_added_after_the_bill_updates_the_check(self):
+        thread = self.full()
+        self.threads.add_bill(thread.token, PNG)
+        state = self.threads.state(self.threads.add_menu(thread.token, PNG))
+        self.assertEqual(state["table"]["check"]["level"], "overcharged")
+
+    def test_the_table_works_without_a_chat(self):
+        thread = self.threads.create("Rohan")
+        state = self.threads.state(self.threads.add_bill(thread.token, PNG))
+        self.assertEqual(state["table"]["check"]["level"], "no_menu")
+
+
 class ExampleLabelTests(Base):
     def test_an_example_report_says_it_is_part_of_the_example(self):
         thread = self.full()

@@ -1,4 +1,5 @@
 """Calls Muse Spark through the Meta Model API, with a spending cap, a cache and retries."""
+import base64
 import hashlib
 import io
 import json
@@ -17,6 +18,8 @@ SPARK = "muse-spark-1.3"
 WONDER = "muse-wonder-1.0"
 PRICE_PER_MILLION = {SPARK: (1.25, 4.25), WONDER: (4.0, 20.0)}
 WEB_SEARCH_EACH = 0.0025
+SAM = "sam-3.1"
+SAM_EACH = 0.0025
 WORST_CASE_SEARCHES = 10
 WORST_CASE_SEARCH_TOKENS = 40000
 HOME = Path(os.environ.get("REDTHREAD_HOME", Path.home() / "muse-spike"))
@@ -225,6 +228,24 @@ class MetaModel:
             raise
         self.ledger.settle(ticket, found.cost)
         return found
+
+    def locate(self, raw, mime, phrase, timeout=60):
+        """SAM 3.1 finds a thing in a photo, such as a payment QR, and answers with boxes as text for code to parse."""
+        encoded = base64.b64encode(raw).decode("ascii")
+        body = {"model": SAM, "input": [{"type": "message", "role": "user", "content": [
+            {"type": "input_text", "text": phrase}, {"type": "input_image", "image_url": f"data:{mime};base64,{encoded}"}]}]}
+        ticket = self.ledger.reserve(SAM_EACH)
+        try:
+            data = json.loads(self._post("/responses", json.dumps(body).encode("utf-8"), "application/json", timeout, 2))
+            text = "\n".join(part.get("text", "") for item in data.get("output") or [] for part in (item.get("content") or []) if isinstance(part, dict))
+        except (ValueError, TypeError, AttributeError) as error:
+            self.ledger.settle(ticket, 0.0)
+            raise ModelError("SAM reply had an unexpected shape.") from error
+        except Exception:
+            self.ledger.settle(ticket, 0.0)
+            raise
+        self.ledger.settle(ticket, SAM_EACH)
+        return text
 
     def _parse_found(self, raw):
         try:

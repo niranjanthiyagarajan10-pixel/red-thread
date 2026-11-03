@@ -282,7 +282,8 @@ def _handler(app):
                 thread = app.threads.find(_THREAD_PATH.match(parts.path).group(1))
                 self._json(200, app.threads.state(thread)) if thread else self._reply(404)
             elif parts.path == "/api/example":
-                self._json(200, {"name": thread_demo.NAME, "chat": thread_demo.CHAT, "profile_image": "/static/example-profile.jpg"})
+                self._json(200, {"name": thread_demo.NAME, "chat": thread_demo.CHAT, "profile_image": "/static/example-profile.jpg",
+                                 "menu_image": "/static/example-menu.jpg", "bill_image": "/static/example-bill.jpg"})
             elif _CARD_PATH.match(parts.path):
                 card = app.knots.card(_CARD_PATH.match(parts.path).group(1))
                 self._json(200, card) if card else self._reply(404)
@@ -374,7 +375,7 @@ def _handler(app):
                 self._reply(404)
                 return
             action = match.group(2) if match else "create"
-            if action in ("create", "profile", "chat", "check", "call") and not app.allowed(self.client_address[0]):
+            if action in ("create", "profile", "chat", "check", "call", "plan", "menu", "bill") and not app.allowed(self.client_address[0]):
                 self._json(429, {"error": "Too many tries. Wait a minute and try again."})
                 return
             try:
@@ -400,6 +401,12 @@ def _handler(app):
                 elif action == "call":
                     self._json(200, app.thread_call(token))
                     return
+                elif action == "plan":
+                    thread = app.threads.add_plan(token)
+                elif action == "menu":
+                    thread = app.threads.add_menu(token, data.get("image"))
+                elif action == "bill":
+                    thread = app.threads.add_bill(token, data.get("image"))
                 elif action == "forget":
                     app.threads.forget(token)
                     self._json(200, {"ok": True})

@@ -64,5 +64,32 @@ class SearchTests(unittest.TestCase):
             model.search("Check this", "x")
 
 
+class LocateTests(SearchTests):
+    def sam(self, text, status=200):
+        body = {"output": [{"type": "message", "content": [{"type": "output_text", "text": text}]}]}
+        return status, json.dumps(body).encode("utf-8")
+
+    def test_sam_gets_the_phrase_and_the_image(self):
+        model = self.model(self.sam("<|box;x1=1;y1=2;x2=3;y2=4;w=10;h=10|>"))
+        text = model.locate(b"\x89PNG", "image/png", "QR code")
+        self.assertIn("box;x1=1", text)
+        url, _, body = self.transport.calls[0]
+        self.assertEqual(url, "https://api.meta.ai/v1/responses")
+        self.assertEqual(body["model"], "sam-3.1")
+        content = body["input"][0]["content"]
+        self.assertEqual(content[0], {"type": "input_text", "text": "QR code"})
+        self.assertTrue(content[1]["image_url"].startswith("data:image/png;base64,"))
+
+    def test_each_image_costs_a_quarter_cent(self):
+        model = self.model(self.sam("none"))
+        model.locate(b"x", "image/jpeg", "QR code")
+        self.assertAlmostEqual(self.ledger.spent, 0.0025)
+
+    def test_a_failed_call_costs_nothing(self):
+        model = self.model(self.sam("", status=400))
+        with self.assertRaises(ModelError):
+            model.locate(b"x", "image/jpeg", "QR code")
+        self.assertEqual(self.ledger.spent, 0.0)
+
 if __name__ == "__main__":
     unittest.main()
