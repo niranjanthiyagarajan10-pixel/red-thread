@@ -6,7 +6,10 @@ each photo (Spark), rings its QR (SAM) and compares it with the menu (code). Cod
 Bluffs: Muse Wonder plays a scam worker who never saw the chat, and tries to answer every Proof Call question blind.
 Each question it gets right is one the guard drops before a call.
 
-Run with: python -m redthread.lab bills|bluff|all
+Screens: Muse Image draws phone screens, some scams and some ordinary. One Press reads each (Spark) and code decides.
+We count missed scams and false alarms, and time every read.
+
+Run with: python -m redthread.lab bills|bluff|screens|all
 """
 import json
 import sys
@@ -14,7 +17,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from redthread import bill, proof, proof_demo
+from redthread import bill, press, proof, proof_demo
 from redthread.conversation import Conversation, Turn
 from redthread.model import ModelError
 
@@ -192,6 +195,78 @@ def run_bluff(spark, wonder, chat_list):
     return rows
 
 
+@dataclass
+class ScreenCase:
+    id: str
+    title: str
+    scene: str
+    expect: str
+
+
+_PHONE = "A flat, sharp, fully legible screenshot of a smartphone screen, portrait, generic interface with no brand names or logos. "
+SCREENS = [
+    # A longer prompt with a warrant on screen was refused by the image model's content policy, so the caption carries the claim.
+    ScreenCase("arrest-video", "Fake CBI video call", _PHONE + "A video call with a man in a khaki shirt at an office desk. "
+               "Caption at the top: Inspector R. Sharma, CBI Mumbai, +91 98765 43210. A red end call button.", "danger"),
+    ScreenCase("customs-voice", "Fake customs voice call", _PHONE + "A voice call screen. Caller: Customs Officer Delhi Airport. Number +91 87654 32109. "
+               "Call time 12:41. Buttons for mute, speaker and a red end button.", "danger"),
+    ScreenCase("family-video", "Family video call", _PHONE + "A video call. A smiling older Indian woman in her kitchen. Caption at the top: Amma. "
+               "Call time 04:12. A red end call button at the bottom.", "calm"),
+    ScreenCase("friend-voice", "Friend on a voice call", _PHONE + "A voice call screen. Caller: Rahul College. Call time 02:05. "
+               "Buttons for mute, speaker and a red end button.", "calm"),
+    ScreenCase("date-move", "Match asks to switch apps", _PHONE + "A dating app chat. Name at the top: Aisha. Grey bubble on the left: "
+               "This app is so glitchy. Let us talk on another app instead, here is my number. Blue bubble on the right: Sure, why?", "caution"),
+    ScreenCase("date-money", "Match asks for money", _PHONE + "A dating app chat. Name at the top: Aisha. Grey bubble on the left: "
+               "I am stuck at the airport. Can you send 20,000 for the visa fee? I will return it tomorrow. Blue bubble on the right: Oh no", "danger"),
+    ScreenCase("date-normal", "Ordinary date plan", _PHONE + "A dating app chat. Name at the top: Meera. Grey bubble on the left: "
+               "Friday at 8 works for me. See you at the cafe near the metro! Blue bubble on the right: Perfect, see you then", "calm"),
+    ScreenCase("pay-reported", "Paying a reported UPI ID", _PHONE + "A UPI payment screen. Paying goldvista.desk@demobank. Amount Rs 25,000. "
+               "A large Pay button.", "danger"),
+    ScreenCase("pay-fresh", "Paying a sweet shop", _PHONE + "A UPI payment screen. Paying shree.sweets@okhdfc. Amount Rs 450. A large Pay button.", "caution"),
+    ScreenCase("sms-parcel", "Fake customs SMS", _PHONE + "An SMS message from VK-CUSTMS: Your parcel contains illegal items. A case is registered "
+               "in your name. Call the officer now or face arrest.", "danger"),
+    ScreenCase("sms-otp", "Real bank code SMS", _PHONE + "An SMS message from AD-BANKOTP: 482913 is your login code. Do not share it with anyone. "
+               "Valid for 5 minutes.", "calm"),
+]
+
+
+def run_screens(model, network, static):
+    rows = []
+    for case in SCREENS:
+        path = static / f"press-{case.id}.jpg"
+        for attempt in range(3):
+            if path.exists():
+                break
+            try:
+                path.write_bytes(model.image(case.scene))
+            except ModelError:
+                pass
+        if not path.exists():
+            rows.append({"id": case.id, "title": case.title, "expect": case.expect, "level": "no_image", "seconds": 0,
+                         "reply": "", "body": "", "read_as": "", "image": ""})
+            continue
+        started = time.monotonic()
+        screen = press.read_screen(model, path.read_bytes(), "image/jpeg")
+        seconds = round(time.monotonic() - started, 1)
+        reply = press.decide(screen, [], network, "lab") if screen else None
+        level = reply.level if reply else "unread"
+        rows.append({"id": case.id, "title": case.title, "expect": case.expect, "level": level, "seconds": seconds,
+                     "reply": reply.title if reply else "", "body": reply.body if reply else "", "read_as": screen.kind if screen else "",
+                     "image": f"/static/press-{case.id}.jpg"})
+    return rows
+
+
+def summarize_screens(rows):
+    scams = [row for row in rows if row["expect"] == "danger"]
+    ordinary = [row for row in rows if row["expect"] == "calm"]
+    rows = [row for row in rows if row["level"] != "no_image"]
+    times = sorted(row["seconds"] for row in rows)
+    return {"screens": len(rows), "scams": len(scams), "stopped": sum(1 for row in scams if row["level"] == "danger"),
+            "ordinary": len(ordinary), "false_alarms": sum(1 for row in ordinary if row["level"] == "danger"),
+            "exact": sum(1 for row in rows if row["level"] == row["expect"]),
+            "median_seconds": times[len(times) // 2] if times else 0, "slowest_seconds": times[-1] if times else 0}
+
+
 def summarize_bluff(rows):
     tried = sum(row["tried"] for row in rows)
     guessed = sum(len(row["guessed"]) for row in rows)
@@ -213,6 +288,14 @@ def main(argv=sys.argv[1:]):
     if which in ("bluff", "all"):
         rows = run_bluff(model, model.using(WONDER), chats())
         results["bluff"] = {"summary": summarize_bluff(rows), "rows": rows}
+    if which in ("screens", "all"):
+        from redthread import thread_demo
+        from redthread.network import Network
+        network = Network(":memory:", salt=b"lab")
+        network.add_case("simulated-earlier-report", {"upi": [thread_demo.SEEDED_UPI]})
+        rows = run_screens(model, network, RESULTS.parent)
+        results["screens"] = {"summary": summarize_screens(rows), "rows": rows}
+        print(json.dumps(results["screens"]["summary"]))
     results["ran"] = time.strftime("%d %b %Y")
     RESULTS.write_text(json.dumps(results, indent=1, ensure_ascii=False), encoding="utf-8")
     print(f"Spent ${model.ledger.spent - before:.3f}. Results in {RESULTS}")

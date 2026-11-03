@@ -276,5 +276,140 @@
    }
   ]
  },
- "ran": "03 Nov 2026"
+ "ran": "03 Nov 2026",
+ "screens": {
+  "summary": {
+   "screens": 11,
+   "scams": 5,
+   "stopped": 5,
+   "ordinary": 4,
+   "false_alarms": 0,
+   "exact": 11,
+   "median_seconds": 4.9,
+   "slowest_seconds": 9.5
+  },
+  "rows": [
+   {
+    "id": "arrest-video",
+    "title": "Fake CBI video call",
+    "expect": "danger",
+    "level": "danger",
+    "seconds": 5.0,
+    "reply": "This is a scam. You can hang up.",
+    "body": "Real police never arrest anyone on a call. Nothing happens if you hang up. Do not pay. Press again after.",
+    "read_as": "call",
+    "image": "/static/press-arrest-video.jpg"
+   },
+   {
+    "id": "customs-voice",
+    "title": "Fake customs voice call",
+    "expect": "danger",
+    "level": "danger",
+    "seconds": 4.3,
+    "reply": "This is a scam. You can hang up.",
+    "body": "Real police never arrest anyone on a call. Nothing happens if you hang up. Do not pay. Press again after.",
+    "read_as": "call",
+    "image": "/static/press-customs-voice.jpg"
+   },
+   {
+    "id": "family-video",
+    "title": "Family video call",
+    "expect": "calm",
+    "level": "calm",
+    "seconds": 4.4,
+    "reply": "Nothing alarming on this screen.",
+    "body": "If a caller says police, arrest or safe account, or asks for a code, press again.",
+    "read_as": "call",
+    "image": "/static/press-family-video.jpg"
+   },
+   {
+    "id": "friend-voice",
+    "title": "Friend on a voice call",
+    "expect": "calm",
+    "level": "calm",
+    "seconds": 3.3,
+    "reply": "Nothing alarming on this screen.",
+    "body": "If a caller says police, arrest or safe account, or asks for a code, press again.",
+    "read_as": "call",
+    "image": "/static/press-friend-voice.jpg"
+   },
+   {
+    "id": "date-move",
+    "title": "Match asks to switch apps",
+    "expect": "caution",
+    "level": "caution",
+    "seconds": 5.0,
+    "reply": "Moving apps early is a known script.",
+    "body": "Aisha: \"Let us talk on another app instead, here is my number.\" Ask for a Proof Call before you go further.",
+    "read_as": "chat",
+    "image": "/static/press-date-move.jpg"
+   },
+   {
+    "id": "date-money",
+    "title": "Match asks for money",
+    "expect": "danger",
+    "level": "danger",
+    "seconds": 4.9,
+    "reply": "Do not send money yet.",
+    "body": "Aisha: \"Can you send 20,000 for the visa fee?\" Most romance scams end like this. Ask for a Proof Call first.",
+    "read_as": "chat",
+    "image": "/static/press-date-money.jpg"
+   },
+   {
+    "id": "date-normal",
+    "title": "Ordinary date plan",
+    "expect": "calm",
+    "level": "calm",
+    "seconds": 3.2,
+    "reply": "Nothing alarming in this chat yet.",
+    "body": "Press again any time. Never send money or codes to someone you have not met.",
+    "read_as": "chat",
+    "image": "/static/press-date-normal.jpg"
+   },
+   {
+    "id": "pay-reported",
+    "title": "Paying a reported UPI ID",
+    "expect": "danger",
+    "level": "danger",
+    "seconds": 5.9,
+    "reply": "Stop. This UPI ID was reported.",
+    "body": "1 other report names goldvista.desk@demobank. Do not pay. If you already paid, call 1930 now.",
+    "read_as": "payment",
+    "image": "/static/press-pay-reported.jpg"
+   },
+   {
+    "id": "pay-fresh",
+    "title": "Paying a sweet shop",
+    "expect": "caution",
+    "level": "caution",
+    "seconds": 3.4,
+    "reply": "Check the name before you pay.",
+    "body": "You are paying shree.sweets@okhdfc. Is that who you expect? UPI payments are hard to reverse.",
+    "read_as": "payment",
+    "image": "/static/press-pay-fresh.jpg"
+   },
+   {
+    "id": "sms-parcel",
+    "title": "Fake customs SMS",
+    "expect": "danger",
+    "level": "danger",
+    "seconds": 9.5,
+    "reply": "This is a known scam. Do not reply or pay.",
+    "body": "Real police, customs and banks never threaten you by message or ask you to pay to clear your name.",
+    "read_as": "chat",
+    "image": "/static/press-sms-parcel.jpg"
+   },
+   {
+    "id": "sms-otp",
+    "title": "Real bank code SMS",
+    "expect": "calm",
+    "level": "calm",
+    "seconds": 7.3,
+    "reply": "Nothing alarming on this screen.",
+    "body": "If a caller says police, arrest or safe account, or asks for a code, press again.",
+    "read_as": "message",
+    "image": "/static/press-sms-otp.jpg"
+   }
+  ]
+ }
 }

@@ -376,3 +376,27 @@ button.mic { border: 0; background: none; padding: 0; cursor: pointer; font: 400
   .field-row { grid-template-columns: 1fr auto; }
   .field-row .label { grid-column: 1 / -1; }
 }
+/* One Press. */
+.press .step-block { margin-top: 48px; }
+.press .step-block h2 { margin: 0; font: 600 clamp(22px, 3vw, 28px)/1.2 var(--display); letter-spacing: -0.02em; }
+.press .sub { margin: 8px 0 0; color: var(--ink-2); font-size: 17px; line-height: 1.47; max-width: 36em; }
+.press .step-block > .btn { margin-top: 18px; }
+.link-row { display: flex; gap: 12px; align-items: center; margin-top: 16px; }
+.recipe { margin: 18px 0 0; padding: 0; list-style: none; counter-reset: r; }
+.recipe li { counter-increment: r; position: relative; padding: 14px 0 14px 40px; border-top: 1px solid var(--hair); font-size: 17px; line-height: 1.47; }
+.recipe li::before { content: counter(r); position: absolute; left: 0; top: 12px; font: 600 22px/1.2 var(--display); color: var(--thread); }
+.banner-demo { margin-top: 20px; padding: 14px 16px; max-width: 26em; background: var(--paper-2); border-left: 4px solid var(--ink-3); }
+.banner-demo.danger { border-left-color: var(--thread); }
+.banner-demo.caution { border-left-color: var(--ink); }
+.banner-demo p { margin: 0; }
+.banner-demo .who { font-size: 13px; color: var(--ink-2); display: flex; justify-content: space-between; }
+.banner-demo .title { margin-top: 4px; font: 600 17px/1.3 var(--text); }
+.banner-demo.danger .title { color: var(--thread); }
+.banner-demo .body { margin-top: 2px; font-size: 15px; line-height: 1.45; }
+.presses { list-style: none; margin: 16px 0 0; padding: 0; }
+.presses li { padding: 14px 0; border-top: 1px solid var(--hair); }
+.presses p { margin: 0; }
+.presses .meta { font-size: 13px; color: var(--ink-2); }
+.presses .title { margin-top: 4px; font: 600 17px/1.3 var(--text); }
+.presses li.danger .title { color: var(--thread); }
+.presses .body { margin-top: 2px; font-size: 15px; line-height: 1.45; color: var(--ink-2); }

@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>One Press. Red Thread</title>
+<link rel="stylesheet" href="/static/app.css">
+<link rel="icon" href="/static/knot.svg" type="image/svg+xml">
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="mark" href="/" aria-label="Red Thread home">
+      <svg viewBox="0 0 34 14" aria-hidden="true"><path d="M1 10H11C15.5 10 17 2.5 13 2.5S10.5 10 17 10H33" fill="none" stroke="#d71e28" stroke-width="2.2" stroke-linecap="round"/></svg>
+      Red Thread
+    </a>
+    <a class="btn btn-red" href="tel:1930">Call 1930</a>
+  </div>
+</header>
+
+<main class="match press">
+  <p class="eyebrow">One Press</p>
+  <h1 class="headline">Press once. Know in seconds.</h1>
+  <p class="lede">On a call where someone says you are under arrest, in a chat that feels off, at a bill you don't trust: press the button on the side of your phone. <strong>Red Thread reads the screen and tells you what to do, without you leaving the call.</strong></p>
+
+  <section class="step-block" aria-labelledby="h-link">
+    <h2 id="h-link">1. Your press link</h2>
+    <p class="sub">Only your phone uses it. Anyone with it can send presses as you, so keep it to yourself.</p>
+    <div class="link-row">
+      <input class="copy" id="link" readonly aria-label="Your press link">
+      <button class="btn btn-ink btn-small" type="button" id="copy">Copy</button>
+    </div>
+    <p class="small" id="copied" aria-live="polite"></p>
+  </section>
+
+  <section class="step-block" aria-labelledby="h-shortcut">
+    <h2 id="h-shortcut">2. Put it on your iPhone</h2>
+    <p class="sub">Open the Shortcuts app, tap +, and add these three actions in this order.</p>
+    <ol class="recipe">
+      <li><b>Take Screenshot</b></li>
+      <li><b>Get Contents of URL</b>. Paste your link as the URL. Tap the arrow: Method <b>POST</b>, Request Body <b>File</b>, File <b>Screenshot</b>.</li>
+      <li><b>Show Notification</b> with <b>Contents of URL</b>. Turn Play Sound off.</li>
+    </ol>
+    <p class="sub">Name it Red Thread. Then Settings, Action Button, Shortcut, Red Thread. On older iPhones use Back Tap in Accessibility, Touch.</p>
+  </section>
+
+  <section class="step-block" aria-labelledby="h-try">
+    <h2 id="h-try">3. Try it</h2>
+    <p class="sub">No iPhone here? Send a screenshot from this page. It goes through the same check.</p>
+    <span class="btn btn-red file">Send a screenshot<input id="shot" type="file" accept="image/png,image/jpeg,image/webp" aria-label="Send a screenshot"></span>
+    <div class="banner-demo" id="banner" hidden aria-live="polite">
+      <p class="who">Red Thread <span>now</span></p>
+      <p class="title" id="b-title"></p>
+      <p class="body" id="b-body"></p>
+    </div>
+  </section>
+
+  <section class="step-block" aria-labelledby="h-history">
+    <h2 id="h-history">Your presses</h2>
+    <p class="sub" id="empty">Nothing yet. Each press shows up here, newest first.</p>
+    <ol class="presses" id="presses"></ol>
+  </section>
+
+  <p class="small foot-note">Screens are read once to answer you. Codes and card numbers are removed before anything is kept, and only the warning is saved. Red Thread is a prototype. It is not the police, a bank or a government service. In danger, call 112. For cyber fraud in India, call 1930.</p>
+</main>
+<script type="module" src="/static/press.js"></script>
+</body>
+</html>
