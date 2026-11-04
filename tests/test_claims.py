@@ -95,10 +95,10 @@ class CheckTests(unittest.TestCase):
         book.start("digital_arrest", NOW)
         book.result("digital_arrest", NOW, wait=2)
         book.start("digital_arrest", NOW + timedelta(minutes=30))
-        self.assertEqual(wonder.calls, 1)
+        self.assertEqual(wonder.calls, claims.TRIES)
         book.start("digital_arrest", NOW + timedelta(minutes=70))
         book.result("digital_arrest", NOW + timedelta(minutes=70), wait=2)
-        self.assertEqual(wonder.calls, 2)
+        self.assertEqual(wonder.calls, 2 * claims.TRIES)
 
     def test_a_failed_check_gives_no_notice_and_no_error(self):
         book = claims.Claims(FakeWonder(ModelError("down")))
@@ -119,6 +119,65 @@ class CheckTests(unittest.TestCase):
         self.addCleanup(book.close)
         self.assertIsNone(book.start("digital_arrest", NOW))
         self.assertIsNone(book.result("digital_arrest", NOW, wait=0.1))
+
+
+class Flaky(FakeWonder):
+    """Fails or finds nothing the first time, then answers."""
+
+    def __init__(self, first):
+        super().__init__()
+        self.first = first
+
+    def search(self, instructions, text, **options):
+        with self.lock:
+            self.calls += 1
+            first = self.calls == 1
+        if first:
+            if isinstance(self.first, Exception):
+                raise self.first
+            return self.first
+        return self.answer
+
+
+class RetryTests(unittest.TestCase):
+    def test_a_failed_search_is_tried_once_more(self):
+        wonder = Flaky(ModelError("timed out"))
+        book = claims.Claims(wonder)
+        self.addCleanup(book.close)
+        book.start("digital_arrest", NOW)
+        self.assertEqual(len(book.result("digital_arrest", NOW, wait=2).lines), 1)
+        self.assertEqual(wonder.calls, 2)
+
+    def test_a_search_with_nothing_official_is_tried_once_more(self):
+        wonder = Flaky(Found("Narration only.", []))
+        book = claims.Claims(wonder)
+        self.addCleanup(book.close)
+        book.start("digital_arrest", NOW)
+        self.assertEqual(len(book.result("digital_arrest", NOW, wait=2).lines), 1)
+
+    def test_failures_are_listed_with_time_and_reason_only(self):
+        book = claims.Claims(FakeWonder(ModelError("status 500")))
+        self.addCleanup(book.close)
+        book.start("digital_arrest", NOW)
+        book.result("digital_arrest", NOW, wait=2)
+        self.assertEqual(book.failures()[0]["at"], "16:47")
+        self.assertIn("digital_arrest", book.failures()[0]["why"])
+
+    def test_an_unexpected_error_never_jams_the_check(self):
+        book = claims.Claims(FakeWonder(RuntimeError("odd")))
+        self.addCleanup(book.close)
+        book.start("digital_arrest", NOW)
+        self.assertIsNone(book.result("digital_arrest", NOW, wait=2))
+        book.model = FakeWonder()
+        book.start("digital_arrest", NOW)
+        self.assertIsNotNone(book.result("digital_arrest", NOW, wait=2))
+
+    def test_warming_starts_the_common_checks(self):
+        wonder = FakeWonder()
+        book = claims.Claims(wonder)
+        self.addCleanup(book.close)
+        book.warm(NOW)
+        self.assertIsNotNone(book.result("digital_arrest", NOW, wait=2))
 
 
 class NoticeTests(unittest.TestCase):

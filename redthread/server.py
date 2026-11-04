@@ -296,7 +296,8 @@ def _handler(app):
                 self._reply(204)
             elif parts.path == "/healthz":
                 failures = app.presses.failures() if app.presses else []
-                self._json(200, {"ok": True, **app.key_check, "press_failures": failures})
+                claim_failures = app.claims.failures() if getattr(app, "claims", None) else []
+                self._json(200, {"ok": True, **app.key_check, "press_failures": failures, "claim_failures": claim_failures})
             elif parts.path == "/webhook":
                 challenge = verify_challenge(dict(parse_qsl(parts.query)), app.verify_token)
                 if challenge is None:
@@ -777,6 +778,8 @@ def main():
         app.key_check = {"key": key_fingerprint(key), "length": len(key), "spark": isinstance(models, list) and SPARK in models,
                          "models": models, "seen_from": where}
         print(f"Key {key_fingerprint(key)}, {len(key)} characters, seen from {where}. Models it can see here: {models}", flush=True)
+    if getattr(app, "claims", None) and app.claims.model:
+        app.claims.warm(datetime.now(IST).replace(tzinfo=None))
     make_server(app, port, host).serve_forever()
 
 

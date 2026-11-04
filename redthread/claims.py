@@ -8,20 +8,22 @@ code already gave. They never make a warning weaker.
 import re
 import sys
 import threading
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from redthread.investigate import Line, domain_of, sourced_lines
-from redthread.model import BudgetExceeded, ModelError
 
 KEEP = timedelta(hours=24)
 KEEP_EMPTY = timedelta(hours=1)
 NOTICE_LIMIT = 180
 TITLE = "Checked with official sources."
+TRIES = 2
+SEARCH_TIMEOUT = 90
+WARM = ("digital_arrest",)
 _OFFICIAL_ENDINGS = (".gov.in", ".nic.in")
 _OFFICIAL = {"rbi.org.in", "npci.org.in", "cert-in.org.in"}
-_FAILED = (ModelError, BudgetExceeded, ValueError, KeyError, TypeError)
 
 INSTRUCTIONS = (
     "You check a claim that scammers in India make to people. Search the web. "
@@ -106,6 +108,7 @@ class Claims:
         self.model = model
         self._done = {}
         self._running = {}
+        self._failures = deque(maxlen=20)
         self._lock = threading.Lock()
         self._pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="claims")
 
@@ -124,12 +127,33 @@ class Claims:
                 self._running[family] = self._pool.submit(self._check, family, now)
             return self._running[family]
 
+    def warm(self, now):
+        """Starts the checks the demo and most victims hit first, so the first press gets notice 2 at once."""
+        for family in WARM:
+            self.start(family, now)
+
+    def failures(self):
+        """Recent failed checks: the time and the reason only. The question is fixed, so nothing personal is in it."""
+        with self._lock:
+            return list(self._failures)
+
     def _check(self, family, now):
         lines = None
-        try:
-            lines = official_lines(self.model.search(INSTRUCTIONS, QUESTIONS[family], effort="low", max_output=1500, timeout=60))
-        except _FAILED as error:
-            print(f"claim check failed: {family}: {type(error).__name__}", file=sys.stderr)
+        for attempt in range(TRIES):
+            try:
+                found = official_lines(self.model.search(INSTRUCTIONS, QUESTIONS[family], effort="low", max_output=1500,
+                                                         timeout=SEARCH_TIMEOUT))
+            except Exception as error:  # Any failure must free the slot, or the check would stay stuck as running.
+                why = f"{family}: {type(error).__name__}: {str(error)[:80]}"
+                print(f"claim check failed: {why}", file=sys.stderr)
+                with self._lock:
+                    self._failures.appendleft({"at": f"{now:%H:%M}", "why": why})
+                continue
+            lines = found
+            if found:
+                break
+            with self._lock:
+                self._failures.appendleft({"at": f"{now:%H:%M}", "why": f"{family}: nothing official found"})
         with self._lock:
             self._running.pop(family, None)
             if lines is not None:

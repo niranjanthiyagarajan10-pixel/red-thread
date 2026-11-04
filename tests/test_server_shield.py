@@ -109,7 +109,7 @@ class HealthTests(Running):
 
     def test_health_lists_failed_reads_without_screen_text(self):
         status, reply = self.request("/healthz")
-        self.assertEqual(reply["press_failures"], [])
+        self.assertEqual((reply["press_failures"], reply["claim_failures"]), ([], []))
         key = self.request("/api/press", {})[1]["key"]
         self.request(f"/api/press/{key}", raw=PNG_BYTES)
         failures = self.request("/healthz")[1]["press_failures"]
