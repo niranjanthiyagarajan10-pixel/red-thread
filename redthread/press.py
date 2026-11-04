@@ -34,7 +34,8 @@ _FAILED = (ModelError, BudgetExceeded, ValueError, KeyError, TypeError, Attribut
 # Lines a message uses to threaten arrest, which the call rules need a caller to see.
 _ARREST_THREAT = re.compile(
     r"face arrest|be arrested|arrest warrant|warrant (?:is |has been )?issued|case (?:is |has been )?registered (?:in|against) your name"
-    r"|illegal (?:items|drugs)|(?:your )?(?:aadhaar|sim|number) (?:is |has been |will be )?(?:blocked|suspended|misused)",
+    r"|illegal (?:items|drugs)|(?:your )?(?:aadhaar|sim|number) (?:is |has been |will be )?(?:blocked|suspended|misused)"
+    r"|(?:you are|you're) (?:now )?under (?:digital )?arrest",
     re.I,
 )
 # Someone saying they are an officer and asking for money. "My brother is in the police" is not a claim about themselves.
@@ -43,6 +44,7 @@ _OFFICER_CLAIM = re.compile(
     r"(?:cbi|police|customs|rbi|trai|ncb|narcotics|cyber ?(?:crime|cell)|crime branch|income tax|enforcement directorate)\b",
     re.I,
 )
+_DONT_SHARE = re.compile(r"\b(?:do not|don't|dont|never) share\b", re.I)
 _MONEY_ASK = re.compile(r"\b(?:pay|send|transfer|deposit|fine|penalty|amount)\b", re.I)
 _IMAGE_TYPES = ((b"\x89PNG", "image/png"), (b"\xff\xd8", "image/jpeg"), (b"RIFF", "image/webp"))
 KINDS = ("call", "chat", "payment", "message", "other")
@@ -194,7 +196,7 @@ def decide(screen, earlier, network=None, key=""):
     """The warning comes from code. The model only said what is on the screen."""
     on_call = screen.kind == "call"
     text = f"{screen.caller} {screen.text}"
-    live = during_call(f"{text} on a video call" if on_call else text) or ("fake_authority" if _fake_officer(text) else None)
+    live = _live_kind(on_call, text)
     if live:
         title, body = (_CALL if on_call else _TEXT)[live]
         return _reply(title, body, "danger", "call" if on_call else "message", caller=screen.caller, live_kind=live)
@@ -232,6 +234,19 @@ def decide(screen, earlier, network=None, key=""):
 
 def _fake_officer(text):
     return bool(_ARREST_THREAT.search(text) or (_OFFICER_CLAIM.search(text) and _MONEY_ASK.search(text)))
+
+
+def _live_kind(on_call, text):
+    """The call rules were written for someone describing a call. On a chat, a note or a message, words like
+    "stay on the call" or "digital arrest" are often ordinary, so only a threat aimed at the reader counts there."""
+    if on_call:
+        return during_call(f"{text} on a video call") or ("fake_authority" if _fake_officer(text) else None)
+    if _fake_officer(text):
+        return "fake_authority"
+    kind = during_call(text)
+    if kind == "fake_authority" or (kind == "code_request" and _DONT_SHARE.search(text)):
+        return None
+    return kind
 
 
 def _follow_up(earlier, now):

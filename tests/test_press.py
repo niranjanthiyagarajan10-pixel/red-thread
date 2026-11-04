@@ -137,6 +137,29 @@ class ScreenTests(unittest.TestCase):
             out = presses(chat)[0].press("k" * 22, PNG, NOW)
             self.assertNotIn("known scam", out.title.lower(), said)
 
+    def test_ordinary_chats_that_sound_like_call_rules_are_not_a_scam(self):
+        for name, said in (("Aisha", "Don't tell anyone, but I really like you"), ("Rahul", "Stay on the call, I'm joining in 2 min"),
+                           ("Amma", "Did you see the news about digital arrest scams? Be careful")):
+            chat = {**MOVE, "chat_with": name, "visible_text": f"{name}\n{said}", "their_words": said, "signals": []}
+            out = presses(chat)[0].press("k" * 22, PNG, NOW)
+            self.assertNotEqual(out.level, "danger", said)
+
+    def test_a_chat_saying_you_are_under_digital_arrest_is_a_stop(self):
+        said = "You are under digital arrest. Stay on the video call."
+        chat = {**MOVE, "chat_with": "Officer", "visible_text": f"Officer\n{said}", "their_words": said, "signals": []}
+        out = presses(chat)[0].press("k" * 22, PNG, NOW)
+        self.assertEqual(out.level, "danger")
+        self.assertIn("known scam", out.title.lower())
+
+    def test_a_bank_warning_not_to_share_the_code_is_not_an_alarm(self):
+        sms = {**HOME, "kind": "message", "visible_text": "HDFC: OTP for txn is 482913. Do not share it with anyone."}
+        self.assertEqual(presses(sms)[0].press("k" * 22, PNG, NOW).level, "calm")
+
+    def test_a_message_asking_for_the_code_is_still_a_stop(self):
+        sms = {**HOME, "kind": "chat", "chat_with": "Bank Support", "visible_text": "Bank Support\nPlease share the OTP you just got to stop the block",
+               "their_words": "Please share the OTP you just got to stop the block"}
+        self.assertEqual(presses(sms)[0].press("k" * 22, PNG, NOW).level, "danger")
+
     def test_a_bank_code_message_is_not_an_alarm(self):
         sms = {**HOME, "kind": "message", "visible_text": "[removed] is your login code. Valid for 5 minutes."}
         self.assertEqual(presses(sms)[0].press("k" * 22, PNG, NOW).level, "calm")
