@@ -1,3 +1,5 @@
+import json
+import urllib.error
 import urllib.request
 
 from tests.test_server_proof import Running
@@ -36,7 +38,7 @@ class PressRouteTests(Running):
 
     def test_a_press_with_no_model_still_answers_as_plain_text(self):
         key = self.request("/api/press", {})[1]["key"]
-        status, reply = self.request(f"/api/press/{key}", raw=b"\x89PNG\r\n\x1a\n" + b"0" * 32)
+        status, reply = self.request(f"/api/press/{key}", raw=PNG_BYTES)
         self.assertEqual(status, 200)
         self.assertIn("hang up", reply.decode("utf-8").lower())
         status, history = self.request(f"/api/press/{key}")
@@ -50,6 +52,54 @@ class PressRouteTests(Running):
             self.assertIn(b"Red Thread", response.read())
 
 
+PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"0" * 32
+
+
+class PressCaseRouteTests(Running):
+    def key(self):
+        return self.request("/api/press", {})[1]["key"]
+
+    def call(self, path, method, value=None):
+        data = None if value is None else json.dumps(value).encode("utf-8")
+        request = urllib.request.Request(self.base + path, data=data, method=method)
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                body = response.read()
+                return response.status, json.loads(body) if body and response.headers.get("Content-Type") == "application/json" else body
+        except urllib.error.HTTPError as error:
+            return error.code, None
+
+    def test_the_shortcut_reply_has_a_notice_an_alert_and_a_later_link(self):
+        key = self.key()
+        status, reply = self.request(f"/api/press/{key}?for=shortcut", raw=PNG_BYTES)
+        self.assertEqual(status, 200)
+        self.assertEqual(sorted(reply), ["alert", "later", "notice"])
+        self.assertIn("hang up", reply["notice"].lower())
+        self.assertEqual((reply["alert"], reply["later"]), ("", ""))
+
+    def test_delete_removes_every_press(self):
+        key = self.key()
+        self.request(f"/api/press/{key}", raw=PNG_BYTES)
+        self.assertEqual(self.call(f"/api/press/{key}", "DELETE"), (200, {"deleted": 1}))
+        self.assertEqual(self.request(f"/api/press/{key}")[1]["presses"], [])
+
+    def test_a_new_link_has_no_case(self):
+        self.assertEqual(self.request(f"/api/press/{self.key()}/case"), (200, {"case": None}))
+
+    def test_a_typed_story_and_payment_are_taken(self):
+        key = self.key()
+        status, reply = self.request(f"/api/press/{key}/story", {"text": "They said they were CBI"})
+        self.assertEqual((status, reply["heard"]), (200, "They said they were CBI"))
+        status, reply = self.request(f"/api/press/{key}/paid", {"paid": True, "at": "16:58", "amount": "50,000"})
+        self.assertEqual(status, 200)
+
+    def test_notice_two_is_empty_when_there_is_nothing_to_add(self):
+        self.assertEqual(self.request(f"/api/press/{self.key()}/later?wait=0")[0], 204)
+
+    def test_a_bad_payment_time_is_refused(self):
+        self.assertEqual(self.request(f"/api/press/{self.key()}/paid", {"paid": True, "at": "25:99"})[0], 400)
+
+
 class HealthTests(Running):
     def test_health_says_which_key_and_models_without_the_key(self):
         self.app.key_check = {"key": "4848b83d70", "spark": False, "models": ["muse-spark-1.2"]}
@@ -61,7 +111,7 @@ class HealthTests(Running):
         status, reply = self.request("/healthz")
         self.assertEqual(reply["press_failures"], [])
         key = self.request("/api/press", {})[1]["key"]
-        self.request(f"/api/press/{key}", raw=b"\x89PNG\r\n\x1a\n" + b"0" * 32)
+        self.request(f"/api/press/{key}", raw=PNG_BYTES)
         failures = self.request("/healthz")[1]["press_failures"]
         self.assertEqual(sorted(failures[0]), ["at", "why"])
 

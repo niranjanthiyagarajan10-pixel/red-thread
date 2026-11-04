@@ -18,12 +18,13 @@ from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qsl, urlparse
 
-from redthread import proof_demo, templates, thread_demo
+from redthread import proof_demo, senses, templates, thread_demo
+from redthread.claims import Claims
 from redthread.channel import WhatsAppChannel
 from redthread.engine import Engine, Incoming
 from redthread.knot_session import Knots
@@ -33,6 +34,7 @@ from redthread.network import Network
 from redthread.listen import Listens
 from redthread.press import Presses
 from redthread.proof_call import Calls, NotAllowed
+from redthread.shield import scrub
 from redthread.store import Store
 from redthread.thread import NotAllowed as ThreadRefused
 from redthread.thread import Threads
@@ -52,7 +54,9 @@ _KNOT_PATH = re.compile(r"^/api/knot/([A-Za-z0-9_-]{10,64})/([a-z]+)$")
 _CARD_PATH = re.compile(r"^/api/card/([A-Za-z0-9_-]{10,64})$")
 _LISTEN_PATH = re.compile(r"^/api/listen/([A-Za-z0-9_-]{10,64})/([a-z]+)$")
 _THREAD_PATH = re.compile(r"^/api/thread/([A-Za-z0-9_-]{10,64})(?:/([a-z]+))?$")
-_PRESS_PATH = re.compile(r"^/api/press/([A-Za-z0-9_-]{22,64})$")
+_PRESS_PATH = re.compile(r"^/api/press/([A-Za-z0-9_-]{22,64})(?:/(case|story|paid|later))?$")
+_PAID_AT = re.compile(r"([01]?\d|2[0-3]):([0-5]\d)")
+LATER_WAIT_SECONDS = 40
 _TOKEN_IN_PATH = re.compile(r"(/(?:proof|knot|card|thread|listen|press)/)[A-Za-z0-9_-]{10,64}")
 IST = timezone(timedelta(hours=5, minutes=30))
 WEB = Path(__file__).resolve().parent / "web"
@@ -126,7 +130,8 @@ class App:
         app.wonder = model.using(WONDER) if model else None
         app.knots = Knots(model)
         app.listens = Listens(model)
-        app.presses = Presses(model, network=judge_network)
+        app.claims = Claims(app.wonder)
+        app.presses = Presses(model, network=judge_network, claims=app.claims)
         app.threads = Threads(model, app.wonder, engine.network, judge_network)
         return app
 
@@ -137,6 +142,8 @@ class App:
             self.listens.close()
         if self.presses:
             self.presses.close()
+        if getattr(self, "claims", None):
+            self.claims.close()
         self.engine.calls.close()
         self.judge_engine.calls.close()
         self.pool.shutdown(wait=False)
@@ -303,7 +310,7 @@ def _handler(app):
             elif parts.path.startswith("/api/knot/"):
                 self._knot_get(parts)
             elif _PRESS_PATH.match(parts.path):
-                self._json(200, {"presses": app.presses.history(_PRESS_PATH.match(parts.path).group(1))[::-1]})
+                self._press_get(parts)
             elif _LISTEN_PATH.match(parts.path) and _LISTEN_PATH.match(parts.path).group(2) == "events":
                 self._listen_events(parts)
             elif _THREAD_PATH.match(parts.path) and not _THREAD_PATH.match(parts.path).group(2):
@@ -485,11 +492,104 @@ def _handler(app):
             if path == "/api/press":
                 self._json(200, {"key": secrets.token_urlsafe(16)})
                 return
-            reply = app.presses.press(_PRESS_PATH.match(path).group(1), body, datetime.now(IST).replace(tzinfo=None))
-            if "application/json" in (self.headers.get("Accept") or ""):
+            key, action = _PRESS_PATH.match(path).groups()
+            now = datetime.now(IST).replace(tzinfo=None)
+            if action == "story":
+                self._press_story(key, body, now)
+                return
+            if action == "paid":
+                self._press_paid(key, body, now)
+                return
+            if action is not None:
+                self._reply(404)
+                return
+            reply = app.presses.press(key, body, now)
+            if dict(parse_qsl(urlparse(self.path).query)).get("for") == "shortcut":
+                # The shortcut shows the notice, texts family if there is an alert, then waits on the later link for notice 2.
+                later = f"{self._origin()}/api/press/{key}/later" if reply.claim else ""
+                self._json(200, {"notice": reply.as_text(), "alert": reply.alert, "later": later})
+            elif "application/json" in (self.headers.get("Accept") or ""):
                 self._json(200, asdict(reply))
             else:
                 self._reply(200, reply.as_text().encode("utf-8"), "text/plain; charset=utf-8")
+
+        def _origin(self):
+            proto = (self.headers.get("X-Forwarded-Proto", "") if app.trust_proxy else "").split(",")[0].strip() or "http"
+            return f"{proto}://{self.headers.get('Host', '')}"
+
+        def _press_get(self, parts):
+            key, action = _PRESS_PATH.match(parts.path).groups()
+            now = datetime.now(IST).replace(tzinfo=None)
+            if action is None:
+                self._json(200, {"presses": app.presses.history(key, now)[::-1]})
+            elif action == "case":
+                self._json(200, {"case": app.presses.case(key, now)})
+            elif action == "later":
+                try:
+                    wait = min(LATER_WAIT_SECONDS, max(0.0, float(dict(parse_qsl(parts.query)).get("wait", LATER_WAIT_SECONDS))))
+                except ValueError:
+                    wait = 0.0
+                text = app.presses.later(key, now, wait)
+                if text:
+                    self._reply(200, text.encode("utf-8"), "text/plain; charset=utf-8")
+                else:
+                    self._reply(204, b"", "text/plain; charset=utf-8")
+            else:
+                self._reply(404)
+
+        def _press_story(self, key, body, now):
+            """What happened, spoken or typed. Speech goes through Voice Transcribe, then the words are kept with codes removed."""
+            try:
+                data = json.loads(body or b"{}")
+                words = str(data.get("text") or "")
+                note = base64.b64decode(data["audio"], validate=True) if data.get("audio") else None
+            except (ValueError, TypeError, binascii.Error):
+                self._json(400, {"error": "Send text or a voice note."})
+                return
+            error = ""
+            if note is not None:
+                words = (senses.hear(app.model, note) if app.model else None) or ""
+                if not words:
+                    error = "We couldn't hear that. Type it instead."
+            view = app.presses.tell(key, words, now) if words.strip() else app.presses.case(key, now)
+            heard = view["heard"] if view else scrub(" ".join(words.split())).text
+            self._json(200, {"case": view, "heard": heard, "error": error})
+
+        def _press_paid(self, key, body, now):
+            try:
+                data = json.loads(body or b"{}")
+            except ValueError:
+                self._json(400, {"error": "Send whether you paid."})
+                return
+            paid, paid_at, amount = bool(data.get("paid")), None, None
+            if paid:
+                at = str(data.get("at") or "").strip()
+                found = _PAID_AT.fullmatch(at) if at else None
+                if at and not found:
+                    self._json(400, {"error": "Give the time as hours and minutes, like 16:58."})
+                    return
+                paid_at = now.replace(hour=int(found.group(1)), minute=int(found.group(2)), second=0, microsecond=0) if found else now
+                if paid_at > now:
+                    paid_at -= timedelta(days=1)
+                digits = "".join(char for char in str(data.get("amount") or "") if char.isdigit())
+                try:
+                    amount = Decimal(digits) if digits else None
+                except InvalidOperation:
+                    amount = None
+                if amount is not None and not 0 < amount < 10 ** 10:
+                    amount = None
+            app.presses.paid(key, paid, paid_at, amount)
+            self._json(200, {"case": app.presses.case(key, now)})
+
+        def do_DELETE(self):
+            match = _PRESS_PATH.match(urlparse(self.path).path)
+            if not match or match.group(2):
+                self._reply(404)
+                return
+            if not app.allowed(self._address()):
+                self._reply(429)
+                return
+            self._json(200, {"deleted": app.presses.forget(match.group(1))})
 
         def _listen_events(self, parts):
             session = app.listens.find(_LISTEN_PATH.match(parts.path).group(1))
