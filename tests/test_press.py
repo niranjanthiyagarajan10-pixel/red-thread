@@ -120,6 +120,23 @@ class ScreenTests(unittest.TestCase):
         self.assertEqual(out.level, "danger")
         self.assertIn("do not reply", out.title.lower())
 
+    def test_someone_claiming_to_be_an_officer_and_asking_for_money_is_a_known_scam(self):
+        for said in ("I'm a CBI officer and you need to pay 1000", "This is Mumbai police. Pay the fine of Rs 5000 today",
+                     "We are calling from customs, transfer the clearance amount now"):
+            chat = {**MONEY, "chat_with": "Chandru", "visible_text": f"Chandru\n{said}", "their_words": said,
+                    "signals": [{"signal": "asks_money", "quote": said}]}
+            out = presses(chat)[0].press("k" * 22, PNG, NOW)
+            self.assertEqual(out.level, "danger", said)
+            self.assertIn("known scam", out.title.lower(), said)
+            self.assertNotIn("romance", out.body.lower(), said)
+
+    def test_a_relative_in_the_police_is_not_a_fake_officer(self):
+        for said in ("My brother is in the police. Can you pay me back for dinner?",
+                     "My dad is a police officer, he will pay the bill"):
+            chat = {**MOVE, "visible_text": f"Aisha\n{said}", "their_words": said, "signals": []}
+            out = presses(chat)[0].press("k" * 22, PNG, NOW)
+            self.assertNotIn("known scam", out.title.lower(), said)
+
     def test_a_bank_code_message_is_not_an_alarm(self):
         sms = {**HOME, "kind": "message", "visible_text": "[removed] is your login code. Valid for 5 minutes."}
         self.assertEqual(presses(sms)[0].press("k" * 22, PNG, NOW).level, "calm")
@@ -145,6 +162,39 @@ class SafetyTests(unittest.TestCase):
         time.sleep(0.8)
         model.answer, model.delay = HOME, 0
         self.assertIn("1930", book.press("k" * 22, PNG, NOW + timedelta(minutes=5)).title)
+
+    def test_busy_screens_get_twelve_seconds(self):
+        self.assertEqual(press.WAIT_SECONDS, 12.0)
+
+    def test_a_failed_read_says_why_in_the_history_and_the_failure_list(self):
+        book, _ = presses(ModelError("Model call failed with status 400. bad image"))
+        book.press("k" * 22, PNG, NOW)
+        entry = book.history("k" * 22)[0]
+        self.assertIn("ModelError", entry["why"])
+        self.assertIn("status 400", book.failures()[0]["why"])
+        self.assertEqual(book.failures()[0]["at"], "11:42")
+
+    def test_a_good_read_records_how_long_it_took(self):
+        book, _ = presses(ARREST, delay=0.2)
+        book.press("k" * 22, PNG, NOW)
+        entry = book.history("k" * 22)[0]
+        self.assertGreaterEqual(entry["seconds"], 0.2)
+        self.assertEqual(entry["why"], "")
+        self.assertEqual(book.failures(), [])
+
+    def test_a_slow_read_is_listed_as_slow_and_keeps_the_real_answer(self):
+        book, _ = presses(ARREST, delay=0.5, wait=0.1)
+        book.press("k" * 22, PNG, NOW)
+        time.sleep(0.8)
+        entry = book.history("k" * 22)[0]
+        self.assertEqual((entry["level"], entry["why"]), ("danger", "slow"))
+        self.assertEqual(book.failures()[0]["why"], "slow")
+
+    def test_the_failure_list_never_holds_screen_text(self):
+        book, _ = presses({**HOME, "visible_text": "Your OTP is 482913"}, delay=0.3, wait=0.05)
+        book.press("k" * 22, PNG, NOW)
+        time.sleep(0.5)
+        self.assertNotIn("482913", json.dumps(book.failures()))
 
     def test_not_an_image_never_reaches_the_model(self):
         book, model = presses(ARREST)

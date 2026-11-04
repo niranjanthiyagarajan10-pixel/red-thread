@@ -9,6 +9,8 @@ import json
 import re
 import sys
 import threading
+import time
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from dataclasses import asdict, dataclass, field
 from datetime import timedelta
@@ -23,7 +25,8 @@ from redthread.stages import SIGNALS, keyword_findings
 
 TITLE_LIMIT = 60
 BODY_LIMIT = 180
-WAIT_SECONDS = 8.0
+WAIT_SECONDS = 12.0
+FAILURE_LIMIT = 20
 FOLLOW_UP = timedelta(hours=3)
 HISTORY_LIMIT = 50
 _KEY = re.compile(r"^[A-Za-z0-9_-]{22,64}$")
@@ -34,6 +37,13 @@ _ARREST_THREAT = re.compile(
     r"|illegal (?:items|drugs)|(?:your )?(?:aadhaar|sim|number) (?:is |has been |will be )?(?:blocked|suspended|misused)",
     re.I,
 )
+# Someone saying they are an officer and asking for money. "My brother is in the police" is not a claim about themselves.
+_OFFICER_CLAIM = re.compile(
+    r"\b(?:i am|i'm|im|this is|we are|we're|calling from|speaking from|message from)\s+(?:\w+\s+){0,3}?"
+    r"(?:cbi|police|customs|rbi|trai|ncb|narcotics|cyber ?(?:crime|cell)|crime branch|income tax|enforcement directorate)\b",
+    re.I,
+)
+_MONEY_ASK = re.compile(r"\b(?:pay|send|transfer|deposit|fine|penalty|amount)\b", re.I)
 _IMAGE_TYPES = ((b"\x89PNG", "image/png"), (b"\xff\xd8", "image/jpeg"), (b"RIFF", "image/webp"))
 KINDS = ("call", "chat", "payment", "message", "other")
 STOP_SIGNALS = ("asks_money", "investment_pitch", "pay_to_withdraw", "asks_codes_or_details", "install_app")
@@ -61,7 +71,8 @@ _PROMPT = (
     "message for a single SMS or notification, other for anything else.\n"
     "caller: the name and number shown on a call screen, exactly as shown. Empty if none.\n"
     "chat_with: the name at the top of a chat. Empty if none.\n"
-    "visible_text: all visible text, exactly as shown, with every digit, in reading order. Do not correct or translate.\n"
+    "visible_text: all visible text, exactly as shown, with every digit, in reading order. Do not correct or translate. "
+    "Leave out the status bar, keyboard, menus, tab bars and ads.\n"
     "their_words: in a chat, only the messages from the other person, exactly as shown. Empty otherwise.\n"
     "signals: warning signs in their_words, each with a short exact quote copied from their_words. Leave it empty if there are none."
 )
@@ -118,6 +129,8 @@ class PressReply:
     at: object = None
     caller: str = ""
     live_kind: str = ""
+    seconds: float = 0.0
+    why: str = ""
 
     def as_text(self):
         return f"{self.title}\n{self.body}"
@@ -131,7 +144,7 @@ def image_type(raw):
     return next((mime for magic, mime in _IMAGE_TYPES if raw.startswith(magic)), None)
 
 
-def read_screen(model, raw, mime, timeout=30):
+def read_screen(model, raw, mime, timeout=30, notes=None):
     encoded = base64.b64encode(raw).decode("ascii")
     content = [{"type": "text", "text": _PROMPT}, {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{encoded}"}}]
     try:
@@ -143,7 +156,10 @@ def read_screen(model, raw, mime, timeout=30):
                       scrub(data["their_words"]).text, list(data["signals"]))
     except _FAILED as error:
         # The person gets the safety line either way. The log says why, never what was on the screen.
-        print(f"press read failed: {type(error).__name__}: {str(error)[:120]}", file=sys.stderr)
+        reason = f"{type(error).__name__}: {str(error)[:120]}"
+        print(f"press read failed: {reason}", file=sys.stderr)
+        if notes is not None:
+            notes.append(scrub(reason).text)
         return None
 
 
@@ -178,7 +194,7 @@ def decide(screen, earlier, network=None, key=""):
     """The warning comes from code. The model only said what is on the screen."""
     on_call = screen.kind == "call"
     text = f"{screen.caller} {screen.text}"
-    live = during_call(f"{text} on a video call" if on_call else text) or ("fake_authority" if _ARREST_THREAT.search(text) else None)
+    live = during_call(f"{text} on a video call" if on_call else text) or ("fake_authority" if _fake_officer(text) else None)
     if live:
         title, body = (_CALL if on_call else _TEXT)[live]
         return _reply(title, body, "danger", "call" if on_call else "message", caller=screen.caller, live_kind=live)
@@ -214,6 +230,10 @@ def decide(screen, earlier, network=None, key=""):
     return _reply(*(CALM_CHAT if screen.kind == "chat" else CALM), "calm", screen.kind)
 
 
+def _fake_officer(text):
+    return bool(_ARREST_THREAT.search(text) or (_OFFICER_CLAIM.search(text) and _MONEY_ASK.search(text)))
+
+
 def _follow_up(earlier, now):
     """A press after a scam call gives the words for 1930, with the number and time filled in by code."""
     call = next((entry for entry in reversed(earlier) if entry.level == "danger" and entry.kind == "call"), None)
@@ -233,6 +253,7 @@ class Presses:
         self.wait = wait
         self._history = {}
         self._lock = threading.Lock()
+        self._failures = deque(maxlen=FAILURE_LIMIT)
         self._pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="press")
 
     def close(self):
@@ -259,25 +280,49 @@ class Presses:
         reply.at = now
         return reply
 
+    def failures(self):
+        """Recent slow or failed reads: the time and the reason only, never what was on the screen."""
+        with self._lock:
+            return list(self._failures)
+
+    def _failed(self, now, why):
+        with self._lock:
+            self._failures.appendleft({"at": f"{now:%H:%M}", "why": why})
+
+    def _read(self, raw, mime):
+        started = time.monotonic()
+        notes = []
+        screen = read_screen(self.model, raw, mime, notes=notes)
+        return screen, (notes[0] if notes else "unreadable reply"), round(time.monotonic() - started, 1)
+
     def press(self, key, raw, now):
         mime = image_type(raw or b"")
         if not mime:
             return _reply(*NOT_AN_IMAGE, "calm", "unread", at=now)
-        future = self._pool.submit(read_screen, self.model, raw, mime)
+        future = self._pool.submit(self._read, raw, mime)
         try:
-            screen = future.result(timeout=self.wait)
+            screen, why, seconds = future.result(timeout=self.wait)
         except FutureTimeout:
+            self._failed(now, "slow")
             future.add_done_callback(lambda done: self._late(key, done, now))
-            return _reply(*UNREAD, "caution", "unread", at=now)
+            return _reply(*UNREAD, "caution", "unread", at=now, why="slow")
+        return self._settle(key, screen, why, seconds, now)
+
+    def _settle(self, key, screen, why, seconds, now, late=False):
         if screen is None:
+            self._failed(now, why)
             reply = _reply(*UNREAD, "caution", "unread", at=now)
-            self._keep(key, reply)
-            return reply
-        reply = self._decide(key, screen, now)
+        else:
+            reply = self._decide(key, screen, now)
+            why = "slow" if late else ""
+        reply.seconds, reply.why = seconds, why
         self._keep(key, reply)
         return reply
 
     def _late(self, key, done, now):
         """A slow read still lands in the history, so the next press knows a scam call happened."""
-        screen = None if done.cancelled() or done.exception() else done.result()
-        self._keep(key, self._decide(key, screen, now) if screen else _reply(*UNREAD, "caution", "unread", at=now))
+        if done.cancelled() or done.exception():
+            self._settle(key, None, "slow, then failed", 0.0, now, late=True)
+            return
+        screen, why, seconds = done.result()
+        self._settle(key, screen, f"slow, then {why}" if screen is None else why, seconds, now, late=True)
