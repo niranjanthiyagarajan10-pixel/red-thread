@@ -28,7 +28,7 @@ from redthread.channel import WhatsAppChannel
 from redthread.engine import Engine, Incoming
 from redthread.knot_session import Knots
 from redthread.knot_session import NotAllowed as KnotRefused
-from redthread.model import HOME, WONDER, Ledger, MetaModel, key_fingerprint, load_api_key, visible_models
+from redthread.model import HOME, SPARK, WONDER, Ledger, MetaModel, key_fingerprint, load_api_key, visible_models
 from redthread.network import Network
 from redthread.listen import Listens
 from redthread.press import Presses
@@ -104,6 +104,7 @@ class App:
         self.wonder = None
         self.rate_limit = 60
         self.trust_proxy = False
+        self.key_check = {}
         self._calls = defaultdict(deque)
         self._lock = threading.Lock()
 
@@ -287,7 +288,7 @@ def _handler(app):
             if parts.path == "/favicon.ico":
                 self._reply(204)
             elif parts.path == "/healthz":
-                self._json(200, {"ok": True})
+                self._json(200, {"ok": True, **app.key_check})
             elif parts.path == "/webhook":
                 challenge = verify_challenge(dict(parse_qsl(parts.query)), app.verify_token)
                 if challenge is None:
@@ -670,7 +671,9 @@ def main():
     print(f"Model: {'on' if app.engine.model else 'off, rules only'}. WhatsApp: {'on' if app.channel else 'off'}. Port {port}.")
     key = load_api_key()
     if key:
-        print(f"Key {key_fingerprint(key)}, {len(key.strip())} characters. Models it can see here: {visible_models(key)}", flush=True)
+        models = visible_models(key)
+        app.key_check = {"key": key_fingerprint(key), "length": len(key), "spark": isinstance(models, list) and SPARK in models, "models": models}
+        print(f"Key {key_fingerprint(key)}, {len(key)} characters. Models it can see here: {models}", flush=True)
     make_server(app, port, host).serve_forever()
 
 

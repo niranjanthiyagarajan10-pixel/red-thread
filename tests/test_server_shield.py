@@ -50,6 +50,14 @@ class PressRouteTests(Running):
             self.assertIn(b"Red Thread", response.read())
 
 
+class HealthTests(Running):
+    def test_health_says_which_key_and_models_without_the_key(self):
+        self.app.key_check = {"key": "4848b83d70", "spark": False, "models": ["muse-spark-1.2"]}
+        status, reply = self.request("/healthz")
+        self.assertEqual(status, 200)
+        self.assertEqual((reply["ok"], reply["key"], reply["spark"]), (True, "4848b83d70", False))
+
+
 class ProxyTests(Running):
     def test_behind_a_proxy_each_visitor_gets_their_own_limit(self):
         self.app.trust_proxy, self.app.rate_limit = True, 1
