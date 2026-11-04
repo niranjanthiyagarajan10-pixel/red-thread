@@ -47,7 +47,7 @@ def _yours(label, meaning=_YOURS):
 def filing_sheet(facts):
     cleaned = pr.clean_text(facts.get("story", ""))
     utr_note = pr.utr_warning(facts["reference"]) if facts.get("reference") else None
-    upi_ids = [*cleaned.moved_ids, *facts.get("suspect_upi", [])]
+    upi_ids = list(dict.fromkeys([*cleaned.moved_ids, *facts.get("suspect_upi", [])]))
     fields = [
         SheetField("Category", "Online Financial Fraud", "Check this matches the form."),
         _yours("Sub Category", "Pick the closest type on the form, such as UPI or investment."),
