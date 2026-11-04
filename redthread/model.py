@@ -152,6 +152,20 @@ def visible_models(api_key, timeout=20):
         return f"failed: {type(error).__name__}"
 
 
+def _trace(timeout=10):
+    with urllib.request.urlopen("https://www.cloudflare.com/cdn-cgi/trace", timeout=timeout) as response:
+        return response.read().decode("utf-8", "replace")
+
+
+def seen_from(fetch=_trace):
+    """The country and site the server appears to be in, since model access can depend on it. Never the address."""
+    try:
+        fields = dict(line.split("=", 1) for line in fetch().splitlines() if "=" in line)
+    except (OSError, ValueError):
+        return "unknown"
+    return ", ".join(part for part in (fields.get("loc", ""), fields.get("colo", "")) if part) or "unknown"
+
+
 class MetaModel:
     def __init__(self, api_key, ledger, model=SPARK, cache_dir=None, transport=_http_post, sleep=time.sleep, timeout=300):
         if "contributor" in model:

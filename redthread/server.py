@@ -28,7 +28,7 @@ from redthread.channel import WhatsAppChannel
 from redthread.engine import Engine, Incoming
 from redthread.knot_session import Knots
 from redthread.knot_session import NotAllowed as KnotRefused
-from redthread.model import HOME, SPARK, WONDER, Ledger, MetaModel, key_fingerprint, load_api_key, visible_models
+from redthread.model import HOME, SPARK, WONDER, Ledger, MetaModel, key_fingerprint, load_api_key, seen_from, visible_models
 from redthread.network import Network
 from redthread.listen import Listens
 from redthread.press import Presses
@@ -673,8 +673,10 @@ def main():
     key = load_api_key()
     if key:
         models = visible_models(key)
-        app.key_check = {"key": key_fingerprint(key), "length": len(key), "spark": isinstance(models, list) and SPARK in models, "models": models}
-        print(f"Key {key_fingerprint(key)}, {len(key)} characters. Models it can see here: {models}", flush=True)
+        where = seen_from()
+        app.key_check = {"key": key_fingerprint(key), "length": len(key), "spark": isinstance(models, list) and SPARK in models,
+                         "models": models, "seen_from": where}
+        print(f"Key {key_fingerprint(key)}, {len(key)} characters, seen from {where}. Models it can see here: {models}", flush=True)
     make_server(app, port, host).serve_forever()
 
 

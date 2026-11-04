@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from redthread.model import BudgetExceeded, Ledger, MetaModel, ModelError, load_api_key
+from redthread.model import BudgetExceeded, Ledger, MetaModel, ModelError, load_api_key, seen_from
 
 KEY = "LLM|123|very-secret-value"
 
@@ -144,6 +144,17 @@ class LedgerTests(unittest.TestCase):
             ledger.reserve(0.75)
             with self.assertRaises(BudgetExceeded):
                 ledger.reserve(0.5)
+
+
+class SeenFromTests(unittest.TestCase):
+    def test_the_country_and_site_come_from_the_trace(self):
+        trace = "\n".join(["fl=1", "h=example", "ip=203.0.113.9", "ts=1", "colo=SIN", "loc=SG", "tls=TLSv1.3", ""])
+        self.assertEqual(seen_from(fetch=lambda: trace), "SG, SIN")
+
+    def test_a_failed_trace_says_so_without_raising(self):
+        def broken():
+            raise OSError("no network")
+        self.assertEqual(seen_from(fetch=broken), "unknown")
 
 
 class ApiKeyTests(unittest.TestCase):
