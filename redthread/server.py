@@ -103,6 +103,7 @@ class App:
         self.model = None
         self.wonder = None
         self.rate_limit = 60
+        self.trust_proxy = False
         self._calls = defaultdict(deque)
         self._lock = threading.Lock()
 
@@ -266,6 +267,11 @@ def _handler(app):
             headers = _PAGE_HEADERS if kind == "html" else {"X-Content-Type-Options": "nosniff", "Cache-Control": "no-cache"}
             self._reply(200, path.read_bytes(), _TYPES[kind], headers)
 
+        def _address(self):
+            """Behind a host's proxy every visitor arrives from the proxy, so the first forwarded address is the visitor."""
+            forwarded = self.headers.get("X-Forwarded-For", "") if app.trust_proxy else ""
+            return forwarded.split(",")[0].strip() or self.client_address[0]
+
         def _json(self, status, value):
             self._reply(status, json.dumps(value, ensure_ascii=False, default=_plain).encode("utf-8"))
 
@@ -339,7 +345,7 @@ def _handler(app):
                 self._reply(404)
 
         def _knot_create(self, body):
-            if not app.allowed(self.client_address[0]):
+            if not app.allowed(self._address()):
                 self._json(429, {"error": "Too many tries. Wait a minute and try again."})
                 return
             try:
@@ -395,7 +401,7 @@ def _handler(app):
                 self._reply(404)
                 return
             action = match.group(2) if match else "create"
-            if action in ("create", "profile", "chat", "check", "call", "plan", "menu", "bill") and not app.allowed(self.client_address[0]):
+            if action in ("create", "profile", "chat", "check", "call", "plan", "menu", "bill") and not app.allowed(self._address()):
                 self._json(429, {"error": "Too many tries. Wait a minute and try again."})
                 return
             try:
@@ -471,7 +477,7 @@ def _handler(app):
                 self._reply(404)
 
         def _press_post(self, path, body):
-            if not app.allowed(self.client_address[0]):
+            if not app.allowed(self._address()):
                 self._reply(429, "Too many presses. Wait a minute.".encode("utf-8"), "text/plain; charset=utf-8")
                 return
             if path == "/api/press":
@@ -500,7 +506,7 @@ def _handler(app):
 
         def _listen_post(self, path, body):
             if path == "/api/listen":
-                if not app.allowed(self.client_address[0]):
+                if not app.allowed(self._address()):
                     self._json(429, {"error": "Too many tries. Wait a minute and try again."})
                     return
                 try:
@@ -523,7 +529,7 @@ def _handler(app):
                 self._reply(404)
 
         def _proof_demo(self):
-            if not app.allowed(self.client_address[0]):
+            if not app.allowed(self._address()):
                 self._json(429, {"error": "Too many calls. Wait a minute and try again."})
                 return
             try:
@@ -620,7 +626,7 @@ def _handler(app):
             self._reply(200)
 
         def _judge(self, body):
-            if not app.allowed(self.client_address[0]):
+            if not app.allowed(self._address()):
                 self._json(429, {"error": "Too many messages. Wait a minute and try again."})
                 return
             try:
@@ -649,10 +655,12 @@ def from_environment(environ=os.environ):
     client = Client(token, phone) if token and phone else None
     salt = environ.get("REDTHREAD_SALT", "").encode("utf-8") or None
     clips = environ.get("REDTHREAD_CLIPS") or proof_demo.CLIPS
-    return App.build(
+    app = App.build(
         data_dir, model, client, environ.get("WHATSAPP_APP_SECRET", ""), environ.get("WHATSAPP_VERIFY_TOKEN", ""), salt,
         public_url=environ.get("REDTHREAD_PUBLIC_URL", ""), clips=clips,
     )
+    app.trust_proxy = environ.get("REDTHREAD_BEHIND_PROXY") == "1"
+    return app
 
 
 def main():

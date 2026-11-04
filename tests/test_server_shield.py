@@ -48,3 +48,18 @@ class PressRouteTests(Running):
     def test_the_setup_page_is_served(self):
         with urllib.request.urlopen(self.base + "/press", timeout=10) as response:
             self.assertIn(b"Red Thread", response.read())
+
+
+class ProxyTests(Running):
+    def test_behind_a_proxy_each_visitor_gets_their_own_limit(self):
+        self.app.trust_proxy, self.app.rate_limit = True, 1
+        def press(address):
+            request = urllib.request.Request(self.base + "/api/press", data=b"{}", method="POST", headers={"X-Forwarded-For": address})
+            try:
+                with urllib.request.urlopen(request, timeout=10) as response:
+                    return response.status
+            except urllib.error.HTTPError as error:
+                return error.code
+        self.assertEqual(press("1.1.1.1"), 200)
+        self.assertEqual(press("2.2.2.2"), 200)
+        self.assertEqual(press("1.1.1.1"), 429)
