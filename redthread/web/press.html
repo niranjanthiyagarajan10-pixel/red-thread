@@ -19,9 +19,58 @@
 </header>
 
 <main class="match press">
+  <section class="case" id="case" hidden aria-labelledby="h-case">
+    <p class="eyebrow">Your case</p>
+    <h2 class="headline" id="h-case"></h2>
+    <div class="case-call">
+      <a class="btn btn-red" href="tel:1930">Call 1930 now</a>
+      <p class="timer" id="timer" aria-live="polite"></p>
+    </div>
+    <div class="script">
+      <p class="label">When they answer, say</p>
+      <p class="say" id="script"></p>
+      <button class="btn btn-line btn-small" type="button" id="copy-script">Copy</button>
+    </div>
+
+    <div class="case-step">
+      <h3>Did any money leave your account?</h3>
+      <div class="choice">
+        <button class="btn btn-line btn-small" type="button" id="paid-yes">Yes, I paid</button>
+        <button class="btn btn-line btn-small" type="button" id="paid-no">No</button>
+      </div>
+      <form class="paid-form" id="paid-form" hidden novalidate>
+        <label>When you paid <input type="time" id="paid-at"></label>
+        <label>How much, in rupees <input inputmode="numeric" id="paid-amount" placeholder="50000" autocomplete="off"></label>
+        <button class="btn btn-red btn-small" type="submit">Start the first-hour timer</button>
+        <p class="small error" id="paid-error" aria-live="polite"></p>
+      </form>
+    </div>
+
+    <div class="case-step" id="checked" hidden>
+      <h3>What official sources say</h3>
+      <ul class="checked" id="checked-lines"></ul>
+    </div>
+
+    <div class="case-step">
+      <h3>Tell us what happened</h3>
+      <p class="sub">In your own words, in English, Hindi or Tamil. It fills the cyber crime form below. Codes and card numbers are removed first.</p>
+      <button class="btn btn-ink note-button" type="button" id="note"><span class="dot" aria-hidden="true"></span><span>Tap and talk</span></button>
+      <p class="small error" id="note-error" aria-live="polite"></p>
+      <label class="type-it">Or type it<textarea id="story-text" rows="3"></textarea></label>
+      <button class="btn btn-line btn-small" type="button" id="story-send">Add to my case</button>
+      <p class="small heard" id="heard" aria-live="polite"></p>
+    </div>
+
+    <div class="case-step">
+      <h3 id="form-name">The form</h3>
+      <p class="sub">Copy each line into <a class="inline" href="https://cybercrime.gov.in" target="_blank" rel="noopener">cybercrime.gov.in</a>. You submit it yourself.</p>
+      <ol class="sheet" id="sheet"></ol>
+    </div>
+  </section>
+
   <p class="eyebrow">One Press</p>
   <h1 class="headline">Press once. Know in seconds.</h1>
-  <p class="lede">On a call where someone says you are under arrest, in a chat that feels off, at a bill you don't trust: press the button on the side of your phone. <strong>Red Thread reads the screen and tells you what to do, without you leaving the call.</strong></p>
+  <p class="lede">On a call where someone says you are under arrest, in a chat that feels off, at a payment you don't trust: press the button on the side of your phone. <strong>Red Thread reads the screen and tells you what to do, without you leaving the call.</strong></p>
 
   <section class="step-block" aria-labelledby="h-link">
     <h2 id="h-link">1. Your press link</h2>
@@ -35,13 +84,15 @@
 
   <section class="step-block" aria-labelledby="h-shortcut">
     <h2 id="h-shortcut">2. Put it on your iPhone</h2>
-    <p class="sub">Open the Shortcuts app, tap +, and add these three actions in this order.</p>
+    <p class="sub">Open the Shortcuts app, tap +, and add these actions in this order.</p>
     <ol class="recipe">
       <li><b>Take Screenshot</b></li>
       <li><b>Get Contents of URL</b>. Paste your link as the URL. Tap the arrow: Method <b>POST</b>, Request Body <b>File</b>, File <b>Screenshot</b>.</li>
-      <li><b>Show Notification</b> with <b>Contents of URL</b>. Turn Play Sound off.</li>
+      <li><b>Get Dictionary Value</b>: Value for <b>notice</b> in Contents of URL. Then <b>Show Notification</b> with Dictionary Value. Turn Play Sound off.</li>
+      <li>To text family on a scam: <b>Get Dictionary Value</b> for <b>alert</b>. <b>If</b> it has any value, <b>Send Message</b> with it to the person you choose. Tap the arrow and turn Show When Run off.</li>
+      <li>For the official-source check: <b>Get Dictionary Value</b> for <b>later</b>. <b>If</b> it has any value, <b>Get Contents of URL</b> with it, then <b>Show Notification</b> with Contents of URL.</li>
     </ol>
-    <p class="sub">Name it Red Thread. Then Settings, Action Button, Shortcut, Red Thread. On older iPhones use Back Tap in Accessibility, Touch.</p>
+    <p class="sub">Name it Red Thread. Then Settings, Action Button, Shortcut, Red Thread. On older iPhones use Back Tap in Accessibility, Touch. Steps 4 and 5 are optional.</p>
   </section>
 
   <section class="step-block" aria-labelledby="h-try">
@@ -50,8 +101,14 @@
     <span class="btn btn-red file">Send a screenshot<input id="shot" type="file" accept="image/png,image/jpeg,image/webp" aria-label="Send a screenshot"></span>
     <div class="banner-demo" id="banner" hidden aria-live="polite">
       <p class="who">Red Thread <span>now</span></p>
-      <p class="title" id="b-title"></p>
-      <p class="body" id="b-body"></p>
+      <p class="title"></p>
+      <p class="body"></p>
+    </div>
+    <p class="small alert-preview" id="alert-preview" hidden>Your phone would text family: <span id="alert-text"></span></p>
+    <div class="banner-demo" id="banner-2" hidden aria-live="polite">
+      <p class="who">Red Thread <span>a few seconds later</span></p>
+      <p class="title"></p>
+      <p class="body"></p>
     </div>
   </section>
 
@@ -59,9 +116,11 @@
     <h2 id="h-history">Your presses</h2>
     <p class="sub" id="empty">Nothing yet. Each press shows up here, newest first.</p>
     <ol class="presses" id="presses"></ol>
+    <button class="btn btn-line btn-small" type="button" id="forget">Delete everything</button>
+    <p class="small" id="forgot" aria-live="polite"></p>
   </section>
 
-  <p class="small foot-note">Screens are read once to answer you. Codes and card numbers are removed before anything is kept, and only the warning is saved. Red Thread is a prototype. It is not the police, a bank or a government service. In danger, call 112. For cyber fraud in India, call 1930.</p>
+  <p class="small foot-note">Each screenshot goes to Meta's Model API to be read once. Red Thread never saves it. We keep the warning, the time and any scam number or UPI ID, only to fill your case, and delete them after 24 hours or when you tap Delete everything. A family text goes from your own phone, so we never see who you send it to. Red Thread is a prototype. It is not the police, a bank or a government service. In danger, call 112. For cyber fraud in India, call 1930.</p>
 </main>
 <script type="module" src="/static/press.js"></script>
 </body>
