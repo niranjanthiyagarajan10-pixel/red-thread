@@ -28,7 +28,7 @@ from redthread.channel import WhatsAppChannel
 from redthread.engine import Engine, Incoming
 from redthread.knot_session import Knots
 from redthread.knot_session import NotAllowed as KnotRefused
-from redthread.model import HOME, WONDER, Ledger, MetaModel, load_api_key
+from redthread.model import HOME, WONDER, Ledger, MetaModel, key_fingerprint, load_api_key, visible_models
 from redthread.network import Network
 from redthread.listen import Listens
 from redthread.press import Presses
@@ -668,6 +668,9 @@ def main():
     host = os.environ.get("HOST", "0.0.0.0")
     port = int(os.environ.get("PORT", "8080"))
     print(f"Model: {'on' if app.engine.model else 'off, rules only'}. WhatsApp: {'on' if app.channel else 'off'}. Port {port}.")
+    key = load_api_key()
+    if key:
+        print(f"Key {key_fingerprint(key)}, {len(key.strip())} characters. Models it can see here: {visible_models(key)}", flush=True)
     make_server(app, port, host).serve_forever()
 
 

@@ -124,6 +124,23 @@ def _http_post(url, headers, body, timeout):
         return 0, str(error).encode("utf-8")
 
 
+def key_fingerprint(api_key):
+    """A short hash to tell two keys apart in a log. It cannot be turned back into the key."""
+    return hashlib.sha256(api_key.strip().encode("utf-8")).hexdigest()[:10]
+
+
+def visible_models(api_key, timeout=20):
+    """The model names this key can see from where the server runs, or the reason the list failed."""
+    request = urllib.request.Request(f"{BASE_URL}/models", headers={"Authorization": f"Bearer {api_key}"})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return sorted(item.get("id", "") for item in json.loads(response.read()).get("data", []))
+    except urllib.error.HTTPError as error:
+        return f"status {error.code}"
+    except (urllib.error.URLError, TimeoutError, ConnectionError, ValueError) as error:
+        return f"failed: {type(error).__name__}"
+
+
 class MetaModel:
     def __init__(self, api_key, ledger, model=SPARK, cache_dir=None, transport=_http_post, sleep=time.sleep, timeout=300):
         if "contributor" in model:
