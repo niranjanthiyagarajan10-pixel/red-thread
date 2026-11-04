@@ -157,6 +157,11 @@ class ApiKeyTests(unittest.TestCase):
             Path(tmp, ".env").write_text('OTHER=1\nMODEL_API_KEY="from-file"\n', encoding="utf-8")
             self.assertEqual(load_api_key({}, Path(tmp)), "from-file")
 
+    def test_a_key_pasted_into_a_host_is_cleaned(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for pasted in (' "abc123" ', "abc123\n", "'abc123'", "MODEL_API_KEY=abc123", "Bearer abc123", 'MODEL_API_KEY="abc123"'):
+                self.assertEqual(load_api_key({"MODEL_API_KEY": pasted}, Path(tmp)), "abc123", pasted)
+
     def test_missing_key_is_none(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertIsNone(load_api_key({}, Path(tmp)))

@@ -49,15 +49,26 @@ class BudgetExceeded(Exception):
 
 def load_api_key(environ=os.environ, home=HOME):
     """The environment first, then a .env file kept outside the project folder."""
-    key = environ.get("MODEL_API_KEY")
+    key = _clean_key(environ.get("MODEL_API_KEY", ""))
     if key:
         return key
     env_file = Path(home) / ".env"
     if env_file.exists():
         for line in env_file.read_text(encoding="utf-8-sig").splitlines():
             if line.startswith("MODEL_API_KEY="):
-                return line.split("=", 1)[1].strip().strip('"').strip("'")
+                return _clean_key(line)
     return None
+
+
+def _clean_key(pasted):
+    """A key pasted into a host's settings page often keeps quotes, spaces, the variable name or the word Bearer."""
+    key = pasted.strip()
+    if key.startswith("MODEL_API_KEY="):
+        key = key.split("=", 1)[1].strip()
+    key = key.strip('"').strip("'").strip()
+    if key.lower().startswith("bearer "):
+        key = key[7:].strip()
+    return key or None
 
 
 class Ledger:
