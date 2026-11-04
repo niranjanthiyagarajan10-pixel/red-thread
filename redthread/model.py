@@ -289,17 +289,23 @@ class MetaModel:
 
     def _post(self, path, body, content_type, timeout, attempts):
         headers = {"Authorization": f"Bearer {self._api_key}", "Content-Type": content_type}
-        last_status = None
+        last_status, last_reply = None, b""
         for attempt in range(attempts):
             status, raw = self.transport(f"{BASE_URL}{path}", headers, body, timeout)
             if status == 200:
                 return raw
-            last_status = status
+            last_status, last_reply = status, raw or b""
             if status != 0 and status not in RETRY_STATUSES:
                 break
             if attempt + 1 < attempts:
                 self.sleep(min(30, 2 ** attempt) + random.random())
-        raise ModelError(f"Model call failed with status {last_status}.")
+        # The API's own error text, cut short, with the key removed if the reply echoes it.
+        said = last_reply.decode("utf-8", "replace") if isinstance(last_reply, bytes) else ""
+        for secret in {self._api_key, *self._api_key.split("|")} - {""}:
+            if len(secret) >= 6:
+                said = said.replace(secret, "[removed]")
+        said = said[:160].replace(chr(10), " ")
+        raise ModelError(f"Model call failed with status {last_status}." + (f" {said}" if said else ""))
 
     def _parse(self, raw):
         try:
