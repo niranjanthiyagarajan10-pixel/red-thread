@@ -288,7 +288,8 @@ def _handler(app):
             if parts.path == "/favicon.ico":
                 self._reply(204)
             elif parts.path == "/healthz":
-                self._json(200, {"ok": True, **app.key_check})
+                failures = app.presses.failures() if app.presses else []
+                self._json(200, {"ok": True, **app.key_check, "press_failures": failures})
             elif parts.path == "/webhook":
                 challenge = verify_challenge(dict(parse_qsl(parts.query)), app.verify_token)
                 if challenge is None:

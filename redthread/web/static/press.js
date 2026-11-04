@@ -21,8 +21,10 @@ function show(reply) {
 
 function row(item) {
   const when = String(item.at || "").slice(11, 16);
+  const took = item.seconds ? `read in ${item.seconds} s` : "";
+  const late = item.why === "slow" ? "answered late" : "";
   return el("li", { class: item.level },
-    el("p", { class: "meta", text: [when, levels[item.level] || ""].filter(Boolean).join("  ") }),
+    el("p", { class: "meta", text: [when, levels[item.level] || "", took, late].filter(Boolean).join(" · ") }),
     el("p", { class: "title", text: item.title }),
     el("p", { class: "body", text: item.body }));
 }

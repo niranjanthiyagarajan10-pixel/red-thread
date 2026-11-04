@@ -57,6 +57,14 @@ class HealthTests(Running):
         self.assertEqual(status, 200)
         self.assertEqual((reply["ok"], reply["key"], reply["spark"]), (True, "4848b83d70", False))
 
+    def test_health_lists_failed_reads_without_screen_text(self):
+        status, reply = self.request("/healthz")
+        self.assertEqual(reply["press_failures"], [])
+        key = self.request("/api/press", {})[1]["key"]
+        self.request(f"/api/press/{key}", raw=b"\x89PNG\r\n\x1a\n" + b"0" * 32)
+        failures = self.request("/healthz")[1]["press_failures"]
+        self.assertEqual(sorted(failures[0]), ["at", "why"])
+
 
 class ProxyTests(Running):
     def test_behind_a_proxy_each_visitor_gets_their_own_limit(self):
