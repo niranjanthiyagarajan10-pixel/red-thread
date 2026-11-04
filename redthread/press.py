@@ -7,6 +7,7 @@ a fixed safety line goes out at once, and the read still counts for the next pre
 import base64
 import json
 import re
+import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from dataclasses import asdict, dataclass, field
@@ -140,7 +141,9 @@ def read_screen(model, raw, mime, timeout=30):
         kind = data["kind"] if data["kind"] in KINDS else "other"
         return Screen(kind, scrub(data["caller"]).text[:80], scrub(data["chat_with"]).text[:40], scrub(data["visible_text"]).text,
                       scrub(data["their_words"]).text, list(data["signals"]))
-    except _FAILED:
+    except _FAILED as error:
+        # The person gets the safety line either way. The log says why, never what was on the screen.
+        print(f"press read failed: {type(error).__name__}: {str(error)[:120]}", file=sys.stderr)
         return None
 
 
