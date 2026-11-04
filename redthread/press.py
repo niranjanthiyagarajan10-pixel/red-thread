@@ -15,6 +15,8 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from dataclasses import asdict, dataclass, field
 from datetime import timedelta
 
+from redthread import aftercall
+from redthread.claims import family_for, notice as claim_notice
 from redthread.conversation import Conversation, Turn
 from redthread.facts import extract_identifiers
 from redthread.model import BudgetExceeded, ModelError
@@ -28,6 +30,10 @@ BODY_LIMIT = 180
 WAIT_SECONDS = 12.0
 FAILURE_LIMIT = 20
 FOLLOW_UP = timedelta(hours=3)
+KEEP = timedelta(hours=24)
+ALERT_GAP = timedelta(minutes=30)
+ALERT_LIMIT = 160
+LATER_WINDOW = timedelta(minutes=10)
 HISTORY_LIMIT = 50
 _KEY = re.compile(r"^[A-Za-z0-9_-]{22,64}$")
 _FAILED = (ModelError, BudgetExceeded, ValueError, KeyError, TypeError, AttributeError)
@@ -104,6 +110,12 @@ _WATCH_TITLES = {
     "wealth_story": "Talk of trading profits is a known hook.", "urgency": "Pressure to hurry is a warning sign.",
     "small_payout": "A small payout is how the hook is set.",
 }
+_CALL_ABOUT = {"fake_authority": "a fake police call", "code_request": "a call asking for your code",
+               "remote_app": "a call asking you to install an app", "safe_account": "a call asking you to move money"}
+_TEXT_ABOUT = {"fake_authority": "a message pretending to be police", "code_request": "a message asking for your code",
+               "remote_app": "a message asking you to install an app", "safe_account": "a message asking you to move money"}
+_STOP_ABOUT = {"asks_money": "asking for money", "investment_pitch": "pushing an investment", "pay_to_withdraw": "asking for a fee to withdraw",
+               "asks_codes_or_details": "asking for your codes", "install_app": "asking you to install an app"}
 UNREAD = ("If a caller says arrest, hang up.",
           "Police never arrest anyone on a call. Never share a code or move money because someone asks. Press again.")
 NOT_AN_IMAGE = ("That was not a screenshot.", "Set the shortcut to send Take Screenshot to Red Thread, then press again.")
@@ -133,6 +145,10 @@ class PressReply:
     live_kind: str = ""
     seconds: float = 0.0
     why: str = ""
+    about: str = ""
+    alert: str = ""
+    upi: str = ""
+    claim: str = ""
 
     def as_text(self):
         return f"{self.title}\n{self.body}"
@@ -199,7 +215,8 @@ def decide(screen, earlier, network=None, key=""):
     live = _live_kind(on_call, text)
     if live:
         title, body = (_CALL if on_call else _TEXT)[live]
-        return _reply(title, body, "danger", "call" if on_call else "message", caller=screen.caller, live_kind=live)
+        about = (_CALL_ABOUT if on_call else _TEXT_ABOUT)[live]
+        return _reply(title, body, "danger", "call" if on_call else "message", caller=screen.caller, live_kind=live, about=about)
 
     if screen.kind == "chat":
         signals = checked_signals(screen)
@@ -207,29 +224,61 @@ def decide(screen, earlier, network=None, key=""):
         stop = next((signal for signal in STOP_SIGNALS if signal in signals), None)
         if stop:
             return _reply(_STOP_TITLES[stop], _quoted(name, signals[stop], "Most romance scams end like this. Ask for a Proof Call first."),
-                          "danger", "chat")
+                          "danger", "chat", live_kind=stop, about=f"{name or 'a chat'} {_STOP_ABOUT[stop]}")
         watch = next((signal for signal in WATCH_SIGNALS if signal in signals), None)
         if watch:
             return _reply(_WATCH_TITLES[watch], _quoted(name, signals[watch], "Ask for a Proof Call before you go further."), "caution", "chat")
 
     if screen.kind == "payment":
         upi = extract_identifiers(screen.text)["upi"]
+        paying = upi[0] if upi else ""
         count = network.report_count(f"press:{key}", {"upi": upi[:1]}) if (network and upi) else 0
         if count:
             reports = "1 other report names" if count == 1 else f"{count} other reports name"
-            return _reply("Stop. This UPI ID was reported.", f"{reports} {upi[0]}. Do not pay. If you already paid, call 1930 now.",
-                          "danger", "payment")
+            return _reply("Stop. This UPI ID was reported.", f"{reports} {paying}. Do not pay. If you already paid, call 1930 now.",
+                          "danger", "payment", upi=paying, about="a payment to a reported UPI ID")
+        before = _scam_before(earlier, screen.at)
+        if before:
+            # One screen alone looks ordinary. Right after a scam press, a payment is what the scammer wants.
+            return _reply("Stop. Do not pay.", f"At {before.at:%H:%M} you pressed on {before.about}. This payment is what they want. "
+                          "If you already paid, call 1930 now.", "danger", "payment", upi=paying, about=f"a payment after {before.about}")
         if any(flag.name == "pay_to_withdraw" for flag in money_flags(screen.text)):
-            return _reply("Do not pay to withdraw.", "Paying a fee or tax to take out your own money is a known scam.", "danger", "payment")
+            return _reply("Do not pay to withdraw.", "Paying a fee or tax to take out your own money is a known scam.", "danger", "payment",
+                          upi=paying, about="a fee to withdraw money", live_kind="pay_to_withdraw")
         if upi:
-            return _reply("Check the name before you pay.", f"You are paying {upi[0]}. Is that who you expect? UPI payments are hard to reverse.",
-                          "caution", "payment")
+            return _reply("Check the name before you pay.", f"You are paying {paying}. Is that who you expect? UPI payments are hard to reverse.",
+                          "caution", "payment", upi=paying)
         return _reply("Check who you are paying.", "Make sure the name matches who you expect. UPI payments are hard to reverse.", "caution", "payment")
 
     follow = _follow_up(earlier, screen.at)
     if follow:
         return follow
     return _reply(*(CALM_CHAT if screen.kind == "chat" else CALM), "calm", screen.kind)
+
+
+def _scam_before(earlier, now):
+    """The latest scam press in the last few hours: a call, a message or a chat. Presses are remembered, screens are not."""
+    if now is None:
+        return None
+    return next((entry for entry in reversed(earlier)
+                 if entry.level == "danger" and entry.kind in ("call", "message", "chat") and entry.about and now - entry.at <= FOLLOW_UP), None)
+
+
+def family_alert(reply):
+    """The words the person's own phone texts to family. Code writes them, and they hold no screen text."""
+    when = f"{reply.at:%H:%M}" if reply.at else "now"
+    if reply.kind == "call":
+        phones = extract_identifiers(reply.caller)["phone"] if reply.caller else []
+        who = f" from {phones[0]}" if phones else ""
+        what = "a fake police call" if reply.live_kind == "fake_authority" else "a scam call"
+        text = f"Red Thread alert: I may be on {what}{who} right now ({when}). Please call me."
+    elif reply.kind == "payment":
+        text = f"Red Thread alert: I was about to make a payment that looks like a scam ({when}). Please call me now."
+    elif reply.kind == "message" and reply.live_kind == "fake_authority":
+        text = f"Red Thread alert: I got a message from someone pretending to be police ({when}). Please call me."
+    else:
+        text = f"Red Thread alert: someone online is pushing me to pay or share details ({when}). Please call me."
+    return _fit(text, ALERT_LIMIT)
 
 
 def _fake_officer(text):
@@ -262,11 +311,14 @@ def _follow_up(earlier, now):
 
 
 class Presses:
-    def __init__(self, model, network=None, wait=WAIT_SECONDS, workers=4):
+    def __init__(self, model, network=None, wait=WAIT_SECONDS, workers=4, claims=None):
         self.model = model
         self.network = network
+        self.claims = claims
         self.wait = wait
         self._history = {}
+        self._alerted = {}
+        self._stories = {}
         self._lock = threading.Lock()
         self._failures = deque(maxlen=FAILURE_LIMIT)
         self._pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="press")
@@ -274,9 +326,32 @@ class Presses:
     def close(self):
         self._pool.shutdown(wait=False, cancel_futures=True)
 
-    def history(self, key):
+    def history(self, key, now=None):
+        if now is not None:
+            self.prune(now)
         with self._lock:
             return [asdict(entry) for entry in self._history.get(key, [])]
+
+    def forget(self, key):
+        """Everything kept for one press link, gone at once. Returns how many presses were removed."""
+        with self._lock:
+            self._alerted.pop(key, None)
+            self._stories.pop(key, None)
+            return len(self._history.pop(key, []))
+
+    def prune(self, now):
+        """Nothing is kept longer than a day."""
+        with self._lock:
+            for key in list(self._history):
+                kept = [entry for entry in self._history[key] if now - entry.at <= KEEP]
+                if kept:
+                    self._history[key] = kept
+                else:
+                    del self._history[key]
+                    self._alerted.pop(key, None)
+                    self._stories.pop(key, None)
+            for key in [key for key in self._stories if key not in self._history]:
+                del self._stories[key]
 
     def _earlier(self, key):
         with self._lock:
@@ -293,7 +368,48 @@ class Presses:
         screen.at = now
         reply = decide(screen, self._earlier(key), self.network, key)
         reply.at = now
+        if reply.level == "danger":
+            # The second layer starts now and runs while the person reads the first notice.
+            reply.claim = family_for(reply.live_kind, f"{screen.caller} {screen.text}") or ""
+            if reply.claim and self.claims:
+                self.claims.start(reply.claim, now)
         return reply
+
+    def case(self, key, now):
+        """The case page for this link, or None until a press finds a scam."""
+        self.prune(now)
+        with self._lock:
+            entries = list(self._history.get(key, []))
+            story = self._stories.get(key) or aftercall.Story()
+        scam = next((entry for entry in entries if entry.level == "danger" and entry.claim), None)
+        checked = self.claims.result(scam.claim, now) if (scam and self.claims) else None
+        return aftercall.case_view(entries, story, checked, now)
+
+    def tell(self, key, words, now):
+        """What the person says happened. Numbers from the presses are allowed in the form, so the model cannot add others."""
+        with self._lock:
+            entries = list(self._history.get(key, []))
+            story = self._stories.setdefault(key, aftercall.Story())
+        known = {"press": " ".join(f"{entry.caller} {entry.upi} {entry.at:%d/%m/%Y %H:%M}" for entry in entries if entry.level == "danger")}
+        aftercall.tell(self.model, story, words, known, now)
+        return self.case(key, now)
+
+    def paid(self, key, paid, paid_at=None, amount=None):
+        with self._lock:
+            story = self._stories.setdefault(key, aftercall.Story())
+            story.paid = bool(paid)
+            story.paid_at = paid_at if paid else None
+            if amount is not None:
+                story.amount = amount
+
+    def later(self, key, now, wait=0.0):
+        """The second notice for the latest press: what official sources say about this scam. Empty if there is none."""
+        with self._lock:
+            entries = self._history.get(key, [])
+            latest = entries[-1] if entries else None
+        if not latest or not latest.claim or not self.claims or now - latest.at > LATER_WINDOW:
+            return ""
+        return claim_notice(self.claims.result(latest.claim, now, wait))
 
     def failures(self):
         """Recent slow or failed reads: the time and the reason only, never what was on the screen."""
@@ -314,6 +430,7 @@ class Presses:
         mime = image_type(raw or b"")
         if not mime:
             return _reply(*NOT_AN_IMAGE, "calm", "unread", at=now)
+        self.prune(now)
         future = self._pool.submit(self._read, raw, mime)
         try:
             screen, why, seconds = future.result(timeout=self.wait)
@@ -330,9 +447,24 @@ class Presses:
         else:
             reply = self._decide(key, screen, now)
             why = "slow" if late else ""
+            if not late:
+                reply.alert = self._alert(key, reply, now)
         reply.seconds, reply.why = seconds, why
         self._keep(key, reply)
         return reply
+
+    def _alert(self, key, reply, now):
+        """A family alert for a scam press, at most once every half hour, so one call does not flood anyone."""
+        if reply.level != "danger" or reply.kind not in ("call", "message", "chat", "payment"):
+            return ""
+        with self._lock:
+            last = self._alerted.get(key)
+            # A payment after a scam call is a new, worse moment, so it alerts again even inside the half hour.
+            escalates = reply.kind == "payment" and last is not None and last[1] != "payment"
+            if last is not None and now - last[0] < ALERT_GAP and not escalates:
+                return ""
+            self._alerted[key] = (now, reply.kind)
+        return family_alert(reply)
 
     def _late(self, key, done, now):
         """A slow read still lands in the history, so the next press knows a scam call happened."""
