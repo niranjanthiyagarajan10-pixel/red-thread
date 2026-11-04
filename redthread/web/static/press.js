@@ -80,14 +80,14 @@ function showTimer(timer) {
 }
 
 function sheetRow(field) {
-  const missing = !field.value;
+  const missing = !field.value && !field.yours;
   const extra = field.problems.filter((problem) => problem !== "missing").join(" ");
   const note = field.yours ? field.meaning : missing ? "Not known yet. Say it above, or fill it on the form." : field.meaning;
-  const copy = missing ? null : el("button", { class: "btn btn-line btn-small", type: "button", text: "Copy",
+  const copy = !field.value ? null : el("button", { class: "btn btn-line btn-small", type: "button", text: "Copy",
     onclick: (event) => copyText(field.value, event.currentTarget) });
   return el("li", { class: missing ? "missing" : "" },
     el("p", { class: "label", text: field.label }),
-    missing ? null : el("p", { class: "value", text: field.value }),
+    field.value ? el("p", { class: "value", text: field.value }) : null,
     note ? el("p", { class: "small", text: note }) : null,
     extra ? el("p", { class: "small warn", text: extra }) : null,
     copy);
